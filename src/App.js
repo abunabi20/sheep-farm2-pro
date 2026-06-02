@@ -19,13 +19,13 @@ try {
   app = initializeApp(firebaseConfig);
   database = getDatabase(app);
 } catch (error) {
-  console.log('Firebase تحديث مطلوب:', error.message);
+  console.log('Firebase:', error.message);
 }
 
 try {
   emailjs.init(process.env.REACT_APP_EMAILJS_PUBLIC_KEY);
 } catch (error) {
-  console.log('EmailJS تحديث مطلوب:', error.message);
+  console.log('EmailJS:', error.message);
 }
 
 const SheepFarmProMax = () => {
@@ -43,18 +43,7 @@ const SheepFarmProMax = () => {
 
   const [sheepForm, setSheepForm] = useState({
     id: '', type: 'sheep', number: '', age: '', motherId: '', birthDate: '',
-    lastProductionDate: '', totalOffspring: '', currentSeasonOffspring: '',
-    milkProduction: '', status: 'productive', salePrice: '', description: '', notes: ''
-  });
-
-  const [feedForm, setFeedForm] = useState({
-    date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '',
-    animalType: 'sheep', quality: 'good', notes: ''
-  });
-
-  const [expenseForm, setExpenseForm] = useState({
-    date: new Date().toISOString().split('T')[0], category: 'رواتب', worker: '',
-    amount: '', description: '', notes: '', isMonthly: false
+    totalOffspring: '', currentSeasonOffspring: '', status: 'productive', notes: ''
   });
 
   const generateAlerts = useCallback(() => {
@@ -68,11 +57,9 @@ const SheepFarmProMax = () => {
           type: 'medicine',
           severity: days < 30 ? 'high' : 'warning',
           message: `⚠️ دواء "${med.name}" سينتهي خلال ${days} يوم`,
-          date: new Date()
         });
       }
     });
-
     sheep.forEach(s => {
       if (s.type !== 'lamb' && s.type !== 'kid' && s.status === 'non-productive' && parseInt(s.age) > 3) {
         newAlerts.push({
@@ -80,7 +67,6 @@ const SheepFarmProMax = () => {
           type: 'health',
           severity: 'warning',
           message: `🔴 الحيوان #${s.number} عمره ${s.age} سنة بدون إنتاج`,
-          date: new Date()
         });
       }
     });
@@ -122,35 +108,19 @@ const SheepFarmProMax = () => {
     generateAlerts();
   }, [sheep, feeds, expenses, medicines, treatments, generateAlerts]);
 
-  const calculateConsumption = (animalType = 'all') => {
+  const calculateConsumption = () => {
     let totalDaily = 0;
-    let totalAnimals = 0;
     sheep.forEach(s => {
-      if (animalType === 'all' || s.type === animalType) {
-        totalAnimals++;
-        if (s.type === 'sheep' || s.type === 'ram' || s.type === 'buck') totalDaily += 1;
-        else totalDaily += 0.75;
-      }
+      if (s.type === 'sheep' || s.type === 'ram' || s.type === 'buck') totalDaily += 1;
+      else totalDaily += 0.75;
     });
-    return { daily: totalDaily || 0, weekly: (totalDaily || 0) * 7, monthly: (totalDaily || 0) * 30, yearly: (totalDaily || 0) * 365, totalAnimals };
+    return { daily: totalDaily, weekly: totalDaily * 7, monthly: totalDaily * 30, yearly: totalDaily * 365, totalAnimals: sheep.length };
   };
 
   const handleAddSheep = () => {
     const newSheep = { ...sheepForm, id: `sheep-${Date.now()}` };
     setSheep([...sheep, newSheep]);
-    setSheepForm({ id: '', type: 'sheep', number: '', age: '', motherId: '', birthDate: '', lastProductionDate: '', totalOffspring: '', currentSeasonOffspring: '', milkProduction: '', status: 'productive', salePrice: '', description: '', notes: '' });
-    setShowModal(false);
-  };
-
-  const handleAddFeed = () => {
-    setFeeds([...feeds, { ...feedForm, id: `feed-${Date.now()}`, cost: parseFloat(feedForm.quantity) * parseFloat(feedForm.pricePerKg) }]);
-    setFeedForm({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '', animalType: 'sheep', quality: 'good', notes: '' });
-    setShowModal(false);
-  };
-
-  const handleAddExpense = () => {
-    setExpenses([...expenses, { ...expenseForm, id: `exp-${Date.now()}` }]);
-    setExpenseForm({ date: new Date().toISOString().split('T')[0], category: 'رواتب', worker: '', amount: '', description: '', notes: '', isMonthly: false });
+    setSheepForm({ id: '', type: 'sheep', number: '', age: '', motherId: '', birthDate: '', totalOffspring: '', currentSeasonOffspring: '', status: 'productive', notes: '' });
     setShowModal(false);
   };
 
@@ -177,11 +147,21 @@ const SheepFarmProMax = () => {
 
   const calculateMetrics = () => {
     const consumption = calculateConsumption();
-    const feedCosts = feeds.reduce((sum, f) => sum + (parseFloat(f.quantity) * parseFloat(f.pricePerKg)), 0);
-    const expenseCosts = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
+    const feedCosts = feeds.reduce((sum, f) => sum + (parseFloat(f.quantity || 0) * parseFloat(f.pricePerKg || 0)), 0);
+    const expenseCosts = expenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
     const productive = sheep.filter(s => s.status === 'productive').length;
     const totalOffspring = sheep.reduce((sum, s) => sum + parseInt(s.totalOffspring || 0), 0);
-    return { totalSheep: sheep.length, productive, totalOffspring, avgAge: sheep.length ? (sheep.reduce((sum, s) => sum + parseInt(s.age || 0), 0) / sheep.length).toFixed(1) : 0, consumption, feedCosts: feedCosts.toFixed(0), expenseCosts: expenseCosts.toFixed(0), totalCosts: (feedCosts + expenseCosts).toFixed(0), productivity: sheep.length ? ((productive / sheep.length) * 100).toFixed(1) : 0 };
+    return { 
+      totalSheep: sheep.length, 
+      productive, 
+      totalOffspring, 
+      avgAge: sheep.length ? (sheep.reduce((sum, s) => sum + parseInt(s.age || 0), 0) / sheep.length).toFixed(1) : 0, 
+      consumption, 
+      feedCosts: feedCosts.toFixed(0), 
+      expenseCosts: expenseCosts.toFixed(0), 
+      totalCosts: (feedCosts + expenseCosts).toFixed(0), 
+      productivity: sheep.length ? ((productive / sheep.length) * 100).toFixed(1) : 0 
+    };
   };
 
   const renderDashboard = () => {
@@ -194,7 +174,7 @@ const SheepFarmProMax = () => {
           <KPICard label="الأغنام المنتجة" value={metrics.productive} unit="رأس" color="#27ae60" />
           <KPICard label="معدل الإنتاجية" value={metrics.productivity} unit="%" color="#f39c12" />
           <KPICard label="الاستهلاك اليومي" value={metrics.consumption.daily.toFixed(0)} unit="كيلو" color="#e74c3c" />
-          <KPICard label="المصروفات الشهرية" value={formatNumber(Math.round(metrics.totalCosts))} unit="ر.س" color="#9b59b6" />
+          <KPICard label="المصروفات الشهرية" value={metrics.totalCosts} unit="ر.س" color="#9b59b6" />
           <KPICard label="المواليد الإجمالية" value={metrics.totalOffspring} unit="رأس" color="#1abc9c" />
         </div>
         <AlertsSection alerts={alerts} />
@@ -288,8 +268,6 @@ const SheepFarmProMax = () => {
     </div>
   );
 
-  const formatNumber = (num) => num.toLocaleString('en-US');
-
   const renderModal = () => {
     if (!showModal) return null;
     return (
@@ -307,6 +285,8 @@ const SheepFarmProMax = () => {
                 <FormInput label="السن (سنة)" type="number" value={sheepForm.age} onChange={e => setSheepForm({...sheepForm, age: e.target.value})} />
                 <FormInput label="تاريخ الولادة" type="date" value={sheepForm.birthDate} onChange={e => setSheepForm({...sheepForm, birthDate: e.target.value})} />
               </div>
+              <FormInput label="إجمالي المواليد" type="number" value={sheepForm.totalOffspring} onChange={e => setSheepForm({...sheepForm, totalOffspring: e.target.value})} />
+              <FormInput label="الحالة" type="select" value={sheepForm.status} onChange={e => setSheepForm({...sheepForm, status: e.target.value})} options={['productive', 'non-productive', 'excluded']} />
               <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
                 إضافة الحيوان
               </button>
