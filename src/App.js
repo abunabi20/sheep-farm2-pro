@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AlertCircle, Bell, Download, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, Bell, Download, Plus, Trash2, LogOut } from 'lucide-react';
 import emailjs from '@emailjs/browser';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
@@ -29,6 +29,11 @@ try {
 }
 
 const SheepFarmProMax = () => {
+  const [user, setUser] = useState(null);
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [registerForm, setRegisterForm] = useState({ email: '', password: '', confirmPassword: '', name: '' });
+
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
@@ -45,6 +50,53 @@ const SheepFarmProMax = () => {
     id: '', type: 'sheep', number: '', age: '', motherId: '', birthDate: '',
     totalOffspring: '', currentSeasonOffspring: '', status: 'productive', notes: ''
   });
+
+  // CHECK LOGIN STATUS
+  useEffect(() => {
+    const savedUser = localStorage.getItem('sheepFarmUser');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
+  }, []);
+
+  // LOAD DATA WHEN USER LOGGED IN
+  useEffect(() => {
+    if (!user || !database) return;
+    
+    const userId = user.id;
+
+    onValue(ref(database, `${userId}/sheep`), (snapshot) => {
+      setSheep(snapshot.exists() ? Object.values(snapshot.val()) : []);
+    });
+    onValue(ref(database, `${userId}/feeds`), (snapshot) => {
+      setFeeds(snapshot.exists() ? Object.values(snapshot.val()) : []);
+    });
+    onValue(ref(database, `${userId}/expenses`), (snapshot) => {
+      setExpenses(snapshot.exists() ? Object.values(snapshot.val()) : []);
+    });
+    onValue(ref(database, `${userId}/medicines`), (snapshot) => {
+      setMedicines(snapshot.exists() ? Object.values(snapshot.val()) : []);
+    });
+    onValue(ref(database, `${userId}/treatments`), (snapshot) => {
+      setTreatments(snapshot.exists() ? Object.values(snapshot.val()) : []);
+    });
+  }, [user]);
+
+  // SYNC DATA TO FIREBASE
+  useEffect(() => {
+    if (!user || !database) return;
+    const userId = user.id;
+    const backup = { sheep, feeds, expenses, medicines, treatments, timestamp: new Date().toISOString() };
+    localStorage.setItem('sheepFarmBackup', JSON.stringify(backup));
+    
+    if (sheep.length > 0) set(ref(database, `${userId}/sheep`), sheep);
+    if (feeds.length > 0) set(ref(database, `${userId}/feeds`), feeds);
+    if (expenses.length > 0) set(ref(database, `${userId}/expenses`), expenses);
+    if (medicines.length > 0) set(ref(database, `${userId}/medicines`), medicines);
+    if (treatments.length > 0) set(ref(database, `${userId}/treatments`), treatments);
+
+    generateAlerts();
+  }, [sheep, feeds, expenses, medicines, treatments]);
 
   const generateAlerts = useCallback(() => {
     const newAlerts = [];
@@ -73,41 +125,53 @@ const SheepFarmProMax = () => {
     setAlerts(newAlerts);
   }, [medicines, sheep]);
 
-  useEffect(() => {
-    if (!database) return;
-    const userId = localStorage.getItem('userId') || 'user_' + Date.now();
-    localStorage.setItem('userId', userId);
+  // LOGIN
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (!loginForm.email || !loginForm.password) {
+      alert('الرجاء إدخال البريد الإلكتروني وكلمة المرور');
+      return;
+    }
+    const userData = {
+      id: loginForm.email.replace(/[^a-z0-9]/g, ''),
+      email: loginForm.email,
+      name: loginForm.email.split('@')[0]
+    };
+    localStorage.setItem('sheepFarmUser', JSON.stringify(userData));
+    setUser(userData);
+    setLoginForm({ email: '', password: '' });
+  };
 
-    onValue(ref(database, `${userId}/sheep`), (snapshot) => {
-      setSheep(snapshot.exists() ? Object.values(snapshot.val()) : []);
-    });
-    onValue(ref(database, `${userId}/feeds`), (snapshot) => {
-      setFeeds(snapshot.exists() ? Object.values(snapshot.val()) : []);
-    });
-    onValue(ref(database, `${userId}/expenses`), (snapshot) => {
-      setExpenses(snapshot.exists() ? Object.values(snapshot.val()) : []);
-    });
-    onValue(ref(database, `${userId}/medicines`), (snapshot) => {
-      setMedicines(snapshot.exists() ? Object.values(snapshot.val()) : []);
-    });
-    onValue(ref(database, `${userId}/treatments`), (snapshot) => {
-      setTreatments(snapshot.exists() ? Object.values(snapshot.val()) : []);
-    });
-  }, []);
+  // REGISTER
+  const handleRegister = (e) => {
+    e.preventDefault();
+    if (!registerForm.email || !registerForm.password || !registerForm.name) {
+      alert('الرجاء ملء جميع الحقول');
+      return;
+    }
+    if (registerForm.password !== registerForm.confirmPassword) {
+      alert('كلمات المرور غير متطابقة');
+      return;
+    }
+    const userData = {
+      id: registerForm.email.replace(/[^a-z0-9]/g, ''),
+      email: registerForm.email,
+      name: registerForm.name
+    };
+    localStorage.setItem('sheepFarmUser', JSON.stringify(userData));
+    setUser(userData);
+    setRegisterForm({ email: '', password: '', confirmPassword: '', name: '' });
+    setAuthMode('login');
+  };
 
-  useEffect(() => {
-    if (!database) return;
-    const userId = localStorage.getItem('userId');
-    const backup = { sheep, feeds, expenses, medicines, treatments, timestamp: new Date().toISOString() };
-    localStorage.setItem('sheepFarmBackup', JSON.stringify(backup));
-    if (sheep.length > 0) set(ref(database, `${userId}/sheep`), sheep);
-    if (feeds.length > 0) set(ref(database, `${userId}/feeds`), feeds);
-    if (expenses.length > 0) set(ref(database, `${userId}/expenses`), expenses);
-    if (medicines.length > 0) set(ref(database, `${userId}/medicines`), medicines);
-    if (treatments.length > 0) set(ref(database, `${userId}/treatments`), treatments);
-    generateAlerts();
-  }, [sheep, feeds, expenses, medicines, treatments, generateAlerts]);
+  // LOGOUT
+  const handleLogout = () => {
+    localStorage.removeItem('sheepFarmUser');
+    setUser(null);
+    setLoginForm({ email: '', password: '' });
+  };
 
+  // ========== APP FUNCTIONS ==========
   const calculateConsumption = () => {
     let totalDaily = 0;
     sheep.forEach(s => {
@@ -155,7 +219,6 @@ const SheepFarmProMax = () => {
       totalSheep: sheep.length, 
       productive, 
       totalOffspring, 
-      avgAge: sheep.length ? (sheep.reduce((sum, s) => sum + parseInt(s.age || 0), 0) / sheep.length).toFixed(1) : 0, 
       consumption, 
       feedCosts: feedCosts.toFixed(0), 
       expenseCosts: expenseCosts.toFixed(0), 
@@ -184,13 +247,10 @@ const SheepFarmProMax = () => {
 
   const renderSheepManagement = () => {
     const sheepList = sheep.filter(s => ['sheep', 'ewe', 'ram', 'lamb'].includes(s.type));
-    const goatList = sheep.filter(s => ['goat', 'doe', 'buck', 'kid'].includes(s.type));
     return (
       <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
         <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🐑 الثروة الحيوانية</h1>
         <SheepTable data={sheepList} title="الأغنام" onAdd={() => { setSheepForm({ ...sheepForm, type: 'sheep' }); setModalType('sheep'); setShowModal(true); }} onDelete={(id) => setDeleteConfirm({ type: 'sheep', id })} />
-        <div style={{ marginBottom: '30px' }} />
-        <SheepTable data={goatList} title="الماعز" onAdd={() => { setSheepForm({ ...sheepForm, type: 'doe' }); setModalType('sheep'); setShowModal(true); }} onDelete={(id) => setDeleteConfirm({ type: 'sheep', id })} />
       </div>
     );
   };
@@ -254,17 +314,15 @@ const SheepFarmProMax = () => {
       <h3 style={{ color: '#3D2817', margin: '0 0 15px 0', display: 'flex', gap: '10px', alignItems: 'center' }}>
         <Bell size={20} /> التنبيهات ({alerts.length})
       </h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {alerts.length === 0 ? (
-          <p style={{ color: '#27ae60', textAlign: 'center', padding: '20px' }}>✓ الحالة جيدة!</p>
-        ) : (
-          alerts.map(alert => (
-            <div key={alert.id} style={{ padding: '12px', borderLeft: `4px solid ${alert.severity === 'high' ? '#e74c3c' : '#f39c12'}`, background: alert.severity === 'high' ? '#ffe5e5' : '#fff3cd', borderRadius: '6px' }}>
-              <p style={{ margin: 0, fontWeight: '500' }}>{alert.message}</p>
-            </div>
-          ))
-        )}
-      </div>
+      {alerts.length === 0 ? (
+        <p style={{ color: '#27ae60', textAlign: 'center', padding: '20px' }}>✓ الحالة جيدة!</p>
+      ) : (
+        alerts.map(alert => (
+          <div key={alert.id} style={{ padding: '12px', marginBottom: '10px', borderLeft: `4px solid ${alert.severity === 'high' ? '#e74c3c' : '#f39c12'}`, background: alert.severity === 'high' ? '#ffe5e5' : '#fff3cd', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontWeight: '500' }}>{alert.message}</p>
+          </div>
+        ))
+      )}
     </div>
   );
 
@@ -272,21 +330,19 @@ const SheepFarmProMax = () => {
     if (!showModal) return null;
     return (
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }} onClick={() => setShowModal(false)}>
-        <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '600px', width: '90%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', position: 'relative' }} onClick={e => e.stopPropagation()}>
+        <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '600px', width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', position: 'relative' }} onClick={e => e.stopPropagation()}>
           <button onClick={() => setShowModal(false)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer' }}>✕</button>
           {modalType === 'sheep' && (
             <form style={{ display: 'flex', flexDirection: 'column', gap: '15px' }} onSubmit={e => { e.preventDefault(); handleAddSheep(); }}>
               <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>إضافة حيوان</h2>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                <FormInput label="النوع" type="select" value={sheepForm.type} onChange={e => setSheepForm({...sheepForm, type: e.target.value})} options={['sheep', 'ewe', 'ram', 'lamb', 'doe', 'buck', 'kid']} />
+                <FormInput label="النوع" type="select" value={sheepForm.type} onChange={e => setSheepForm({...sheepForm, type: e.target.value})} options={['sheep', 'ewe', 'ram', 'lamb']} />
                 <FormInput label="الرقم" type="text" value={sheepForm.number} onChange={e => setSheepForm({...sheepForm, number: e.target.value})} required />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <FormInput label="السن (سنة)" type="number" value={sheepForm.age} onChange={e => setSheepForm({...sheepForm, age: e.target.value})} />
                 <FormInput label="تاريخ الولادة" type="date" value={sheepForm.birthDate} onChange={e => setSheepForm({...sheepForm, birthDate: e.target.value})} />
               </div>
-              <FormInput label="إجمالي المواليد" type="number" value={sheepForm.totalOffspring} onChange={e => setSheepForm({...sheepForm, totalOffspring: e.target.value})} />
-              <FormInput label="الحالة" type="select" value={sheepForm.status} onChange={e => setSheepForm({...sheepForm, status: e.target.value})} options={['productive', 'non-productive', 'excluded']} />
               <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
                 إضافة الحيوان
               </button>
@@ -297,7 +353,7 @@ const SheepFarmProMax = () => {
     );
   };
 
-  const FormInput = ({ label, type, value, onChange, placeholder, options, required, step }) => {
+  const FormInput = ({ label, type, value, onChange, placeholder, options, required }) => {
     if (type === 'select') {
       return (
         <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -312,7 +368,7 @@ const SheepFarmProMax = () => {
     return (
       <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         <span style={{ color: '#3D2817', fontWeight: '600', fontSize: '13px' }}>{label}</span>
-        <input type={type} value={value} onChange={onChange} placeholder={placeholder} required={required} step={step} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontFamily: 'inherit' }} />
+        <input type={type} value={value} onChange={onChange} placeholder={placeholder} required={required} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontFamily: 'inherit' }} />
       </label>
     );
   };
@@ -324,7 +380,7 @@ const SheepFarmProMax = () => {
         <div style={{ background: 'white', padding: '30px', borderRadius: '12px', textAlign: 'center', maxWidth: '400px' }}>
           <AlertCircle size={48} color="#e74c3c" style={{ margin: '0 auto 20px' }} />
           <h2 style={{ color: '#3D2817', marginBottom: '10px' }}>تأكيد الحذف</h2>
-          <p style={{ color: '#666', marginBottom: '30px' }}>هل أنت متأكد من حذف هذا العنصر؟</p>
+          <p style={{ color: '#666', marginBottom: '30px' }}>هل أنت متأكد؟</p>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
             <button onClick={() => handleDelete(deleteConfirm.type, deleteConfirm.id)} style={{ background: '#e74c3c', color: 'white', border: 'none', padding: '10px 30px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
               حذف
@@ -338,6 +394,90 @@ const SheepFarmProMax = () => {
     );
   };
 
+  // ========== LOGIN SCREEN ==========
+  if (!user) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
+        <style>{`* { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }`}</style>
+        <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '500px', width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
+          <h1 style={{ color: '#3D2817', textAlign: 'center', marginBottom: '10px', fontSize: '32px' }}>🐑 FarmHub Pro</h1>
+          <p style={{ color: '#666', textAlign: 'center', marginBottom: '30px' }}>نظام إدارة الأغنام والماعز</p>
+
+          {authMode === 'login' ? (
+            <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <h2 style={{ color: '#3D2817', marginBottom: '20px', fontSize: '24px' }}>تسجيل الدخول</h2>
+              <FormInput 
+                label="البريد الإلكتروني" 
+                type="email" 
+                value={loginForm.email} 
+                onChange={e => setLoginForm({...loginForm, email: e.target.value})} 
+                required 
+              />
+              <FormInput 
+                label="كلمة المرور" 
+                type="password" 
+                value={loginForm.password} 
+                onChange={e => setLoginForm({...loginForm, password: e.target.value})} 
+                required 
+              />
+              <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                دخول
+              </button>
+              <p style={{ textAlign: 'center', color: '#666', marginTop: '20px' }}>
+                ليس لديك حساب؟{' '}
+                <button type="button" onClick={() => setAuthMode('register')} style={{ background: 'none', border: 'none', color: '#D4A574', cursor: 'pointer', fontWeight: 'bold' }}>
+                  سجل الآن
+                </button>
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <h2 style={{ color: '#3D2817', marginBottom: '20px', fontSize: '24px' }}>تسجيل جديد</h2>
+              <FormInput 
+                label="الاسم" 
+                type="text" 
+                value={registerForm.name} 
+                onChange={e => setRegisterForm({...registerForm, name: e.target.value})} 
+                required 
+              />
+              <FormInput 
+                label="البريد الإلكتروني" 
+                type="email" 
+                value={registerForm.email} 
+                onChange={e => setRegisterForm({...registerForm, email: e.target.value})} 
+                required 
+              />
+              <FormInput 
+                label="كلمة المرور" 
+                type="password" 
+                value={registerForm.password} 
+                onChange={e => setRegisterForm({...registerForm, password: e.target.value})} 
+                required 
+              />
+              <FormInput 
+                label="تأكيد كلمة المرور" 
+                type="password" 
+                value={registerForm.confirmPassword} 
+                onChange={e => setRegisterForm({...registerForm, confirmPassword: e.target.value})} 
+                required 
+              />
+              <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                إنشاء حساب
+              </button>
+              <p style={{ textAlign: 'center', color: '#666', marginTop: '20px' }}>
+                لديك حساب بالفعل؟{' '}
+                <button type="button" onClick={() => setAuthMode('login')} style={{ background: 'none', border: 'none', color: '#D4A574', cursor: 'pointer', fontWeight: 'bold' }}>
+                  دخول
+                </button>
+              </p>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ========== MAIN APP ==========
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh', background: '#f9f7f4' }}>
       <style>{`* { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Segoe UI', Tahoma, Geneva, sans-serif; direction: rtl; }`}</style>
@@ -345,7 +485,8 @@ const SheepFarmProMax = () => {
         <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center', paddingBottom: '15px', borderBottom: '2px solid #D4A574' }}>
           🐑 FarmHub Pro
         </div>
-        <ul style={{ listStyle: 'none' }}>
+        <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '20px' }}>مرحباً {user.name}</p>
+        <ul style={{ listStyle: 'none', marginBottom: '30px' }}>
           {[{ id: 'dashboard', label: '📊 لوحة التحكم' }, { id: 'sheep', label: '🐑 الثروة الحيوانية' }].map(item => (
             <li key={item.id} style={{ marginBottom: '8px' }}>
               <button onClick={() => setActiveTab(item.id)} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', color: activeTab === item.id ? '#3D2817' : '#E8D5C4', background: activeTab === item.id ? 'linear-gradient(90deg, #F5D547, #D4A574)' : 'transparent', border: 'none', cursor: 'pointer', width: '100%', borderRadius: '6px', fontSize: '13px', fontWeight: activeTab === item.id ? 'bold' : 'normal' }}>
@@ -353,12 +494,15 @@ const SheepFarmProMax = () => {
               </button>
             </li>
           ))}
-          <li style={{ marginTop: '30px', paddingTop: '15px', borderTop: '1px solid rgba(255,255,255,0.2)' }}>
-            <button onClick={exportAllData} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', color: '#F5D547', background: 'transparent', border: '1px solid #F5D547', cursor: 'pointer', width: '100%', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>
-              <Download size={16} /> احفظ البيانات
-            </button>
-          </li>
         </ul>
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.2)', paddingTop: '15px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <button onClick={exportAllData} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', color: '#F5D547', background: 'transparent', border: '1px solid #F5D547', cursor: 'pointer', width: '100%', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>
+            <Download size={16} /> احفظ البيانات
+          </button>
+          <button onClick={handleLogout} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', width: '100%', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>
+            <LogOut size={16} /> تسجيل الخروج
+          </button>
+        </div>
       </div>
       <div style={{ gridColumn: 2, overflowY: 'auto', maxHeight: '100vh' }}>
         {activeTab === 'dashboard' && renderDashboard()}
