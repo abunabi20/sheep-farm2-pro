@@ -1,20 +1,8 @@
-=    import React, { useState, useEffect, useCallback, useMemo } from 'react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { LogOut } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, onValue, remove } from 'firebase/database';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDKVch1VTErpbv6RckVKpZC_ACWXld7ajM",
-  authDomain: "sheep-farm2-pro.firebaseapp.com",
-  databaseURL: "https://sheep-farm2-pro-default-rtdb.firebaseio.com",
-  projectId: "sheep-farm2-pro",
-  storageBucket: "sheep-farm2-pro.appspot.com",
-  messagingSenderId: "610995382085",
-  appId: "1:610995382085:web:ede6bf321d4947e9f2002c"
-};
-
-const app = initializeApp(firebaseConfig);
-const database = getDatabase(app);
+// Simple Firebase config - using REST API instead of SDK
+const FIREBASE_DB_URL = "https://sheep-farm2-pro-default-rtdb.firebaseio.com";
 
 const calculateAge = (startDate) => {
   const start = new Date(startDate);
@@ -30,56 +18,37 @@ const App = () => {
   const [authMode, setAuthMode] = useState('login');
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [registerData, setRegisterData] = useState({ email: '', password: '', confirmPassword: '', name: '' });
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('animals');
   const [animalTypes, setAnimalTypes] = useState(['sheep', 'goat']);
   const [selectedType, setSelectedType] = useState('sheep');
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [animals, setAnimals] = useState({});
-  const [feeds, setFeeds] = useState([]);
-  const [expenses, setExpenses] = useState([]);
   const [showAddType, setShowAddType] = useState(false);
   const [newTypeName, setNewTypeName] = useState('');
 
   const [animalForm, setAnimalForm] = useState({
     number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0],
-    status: 'active', lastProduction: new Date().toISOString().split('T')[0],
-    notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '',
+    status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '',
     saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular',
-    slaughterLocation: '', slaughterNotes: '', deathDate: '', ageAtDeath: '0'
+    slaughterLocation: '', slaughterNotes: '', deathDate: ''
   });
-
-
 
   useEffect(() => {
     const saved = localStorage.getItem('sheepFarmUser');
     if (saved) setUser(JSON.parse(saved));
+    
+    const savedTypes = localStorage.getItem('animalTypes');
+    if (savedTypes) setAnimalTypes(JSON.parse(savedTypes));
+    
+    const savedAnimals = localStorage.getItem('animals');
+    if (savedAnimals) setAnimals(JSON.parse(savedAnimals));
   }, []);
 
-  // Firebase Sync
   useEffect(() => {
-    if (user) {
-      const animalsRef = ref(database, `users/${user.id}/animals`);
-      onValue(animalsRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) setAnimals(data);
-        else setAnimals({});
-      });
-
-      const feedsRef = ref(database, `users/${user.id}/feeds`);
-      onValue(feedsRef, (snapshot) => {
-        const data = snapshot.val();
-        setFeeds(data ? Object.entries(data).map(([k, v]) => ({ id: k, ...v })) : []);
-      });
-
-      const expensesRef = ref(database, `users/${user.id}/expenses`);
-      onValue(expensesRef, (snapshot) => {
-        const data = snapshot.val();
-        setExpenses(data ? Object.entries(data).map(([k, v]) => ({ id: k, ...v })) : []);
-      });
-    }
-  }, [user]);
+    localStorage.setItem('animals', JSON.stringify(animals));
+  }, [animals]);
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -108,23 +77,21 @@ const App = () => {
 
   const handleAnimalChange = useCallback((f, v) => setAnimalForm(p => ({ ...p, [f]: v })), []);
 
-  const handleAddAnimal = async () => {
+  const handleAddAnimal = () => {
     if (!animalForm.number || !animalForm.birthDate) return alert('ملء البيانات');
-    if (!user) return;
     
     const animalId = editingId || `${selectedType}-${Date.now()}`;
+    const updated = { ...animals };
+    if (!updated[selectedType]) updated[selectedType] = {};
+    updated[selectedType][animalId] = animalForm;
     
-    try {
-      await set(ref(database, `users/${user.id}/animals/${selectedType}/${animalId}`), animalForm);
-      setAnimalForm({ number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0], status: 'active', lastProduction: new Date().toISOString().split('T')[0], notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '', saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular', slaughterLocation: '', slaughterNotes: '', deathDate: '', ageAtDeath: '0' });
-      setShowModal(false);
-      setEditingId(null);
-    } catch (error) {
-      alert('خطأ: ' + error.message);
-    }
+    setAnimals(updated);
+    setAnimalForm({ number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0], status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '', saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular', slaughterLocation: '', slaughterNotes: '', deathDate: '' });
+    setShowModal(false);
+    setEditingId(null);
   };
 
-  const handleAddType = async () => {
+  const handleAddType = () => {
     if (!newTypeName) return alert('أدخل اسم النوع');
     if (animalTypes.includes(newTypeName)) return alert('النوع موجود بالفعل');
     const updated = [...animalTypes, newTypeName];
@@ -135,14 +102,11 @@ const App = () => {
     setSelectedType(newTypeName);
   };
 
-  const handleDeleteAnimal = async (id) => {
+  const handleDeleteAnimal = (id) => {
     if (!window.confirm('حذف؟')) return;
-    if (!user) return;
-    try {
-      await remove(ref(database, `users/${user.id}/animals/${selectedType}/${id}`));
-    } catch (error) {
-      alert('خطأ: ' + error.message);
-    }
+    const updated = { ...animals };
+    delete updated[selectedType][id];
+    setAnimals(updated);
   };
 
   const handleEditAnimal = (id) => {
@@ -217,7 +181,7 @@ const App = () => {
         <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>
         <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '20px' }}>مرحباً {user.name}</p>
         <ul style={{ listStyle: 'none', marginBottom: '30px' }}>
-          {[{ id: 'dashboard', label: '📊 لوحة التحكم' }, { id: 'animals', label: '🐑 الحيوانات' }, { id: 'feeds', label: '🌾 الأعلاف' }, { id: 'expenses', label: '💰 المصروفات' }].map(item => (
+          {[{ id: 'animals', label: '🐑 الحيوانات' }].map(item => (
             <li key={item.id} style={{ marginBottom: '8px' }}>
               <button onClick={() => setActiveTab(item.id)} style={{ width: '100%', padding: '12px 15px', color: activeTab === item.id ? '#3D2817' : '#E8D5C4', background: activeTab === item.id ? 'linear-gradient(90deg, #F5D547, #D4A574)' : 'transparent', border: 'none', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: activeTab === item.id ? 'bold' : 'normal' }}>
                 {item.label}
@@ -283,14 +247,12 @@ const App = () => {
               </div>
             )}
 
-            <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
-              <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#3D2817' }}>
-                الإجمالي: {typeCount.total} | النشطة: {typeCount.active} | المنتجة: {typeCount.productive}
-              </p>
+            <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold', color: '#3D2817' }}>
+              الإجمالي: {typeCount.total} | النشطة: {typeCount.active} | المنتجة: {typeCount.productive}
             </div>
 
             <button
-              onClick={() => { setAnimalForm({ number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0], status: 'active', lastProduction: new Date().toISOString().split('T')[0], notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '', saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular', slaughterLocation: '', slaughterNotes: '', deathDate: '', ageAtDeath: '0' }); setModalType('animal'); setShowModal(true); setEditingId(null); }}
+              onClick={() => { setAnimalForm({ number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0], status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '', saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular', slaughterLocation: '', slaughterNotes: '', deathDate: '' }); setModalType('animal'); setShowModal(true); setEditingId(null); }}
               style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}
             >
               + إضافة
@@ -333,79 +295,6 @@ const App = () => {
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
-
-        {activeTab === 'dashboard' && (
-          <div>
-            <h1>📊 لوحة التحكم</h1>
-            <p style={{ marginTop: '20px', color: '#666' }}>مرحبا في FarmHub Pro - نظام إدارة الثروة الحيوانية</p>
-          </div>
-        )}
-
-        {activeTab === 'feeds' && (
-          <div>
-            <h1>🌾 الأعلاف</h1>
-            <button
-              onClick={() => { setFeedForm({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '' }); setModalType('feed'); setShowModal(true); setEditingId(null); }}
-              style={{ marginBottom: '20px', marginTop: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}
-            >
-              + إضافة
-            </button>
-            {feeds.length > 0 && (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f0f0f0' }}>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>التاريخ</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>النوع</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>الكمية</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>السعر</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {feeds.map(f => (
-                    <tr key={f.id} style={{ borderBottom: '1px solid #ddd' }}>
-                      <td style={{ padding: '10px' }}>{f.date}</td>
-                      <td style={{ padding: '10px' }}>{f.type}</td>
-                      <td style={{ padding: '10px' }}>{f.quantity}</td>
-                      <td style={{ padding: '10px' }}>{f.pricePerKg}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'expenses' && (
-          <div>
-            <h1>💰 المصروفات</h1>
-            <button
-              onClick={() => { setExpenseForm({ date: new Date().toISOString().split('T')[0], category: 'رواتب', amount: '' }); setModalType('expense'); setShowModal(true); setEditingId(null); }}
-              style={{ marginBottom: '20px', marginTop: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}
-            >
-              + إضافة
-            </button>
-            {expenses.length > 0 && (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f0f0f0' }}>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>التاريخ</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>الفئة</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>المبلغ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {expenses.map(e => (
-                    <tr key={e.id} style={{ borderBottom: '1px solid #ddd' }}>
-                      <td style={{ padding: '10px' }}>{e.date}</td>
-                      <td style={{ padding: '10px' }}>{e.category}</td>
-                      <td style={{ padding: '10px' }}>{e.amount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
           </div>
         )}
       </div>
@@ -454,7 +343,7 @@ const App = () => {
 
                 {animalForm.status === 'slaughtered' && (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>مكان الذبح</label><select value={animalForm.slaughterLocation} onChange={(e) => handleAnimalChange('slaughterLocation', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }}><option value="freezer">ثلاجة</option><option value="guest">ضيف</option></select></div>
+                    <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>مكان الذبح</label><select value={animalForm.slaughterLocation} onChange={(e) => handleAnimalChange('slaughterLocation', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }}><option value="">اختر</option><option value="freezer">ثلاجة</option><option value="guest">ضيف</option></select></div>
                     <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>ملاحظات</label><input type="text" value={animalForm.slaughterNotes} onChange={(e) => handleAnimalChange('slaughterNotes', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} /></div>
                   </div>
                 )}
