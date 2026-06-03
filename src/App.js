@@ -132,7 +132,6 @@ const App = () => {
     if (!sheepForm.number || !sheepForm.ageValue) return alert('ملء البيانات');
     if (!user) return;
     
-    const newSheep = { ...sheepForm, id: editingId || `sheep-${Date.now()}` };
     const sheepId = editingId || `sheep-${Date.now()}`;
     
     try {
