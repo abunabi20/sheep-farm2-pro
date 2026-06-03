@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Bell, Plus, Trash2, LogOut, Edit2, Eye, EyeOff } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 
 const App = () => {
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login');
-  const [showPassword, setShowPassword] = useState(false);
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [registerData, setRegisterData] = useState({ email: '', password: '', confirmPassword: '', name: '' });
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -288,8 +287,8 @@ const App = () => {
             </li>
           ))}
         </ul>
-        <button onClick={handleLogout} style={{ width: '100%', padding: '12px 15px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>
-          <LogOut size={16} style={{ marginRight: '5px' }} /> تسجيل الخروج
+        <button onClick={handleLogout} style={{ width: '100%', padding: '12px 15px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+          <LogOut size={16} /> تسجيل الخروج
         </button>
       </div>
       <div style={{ overflowY: 'auto', maxHeight: '100vh', width: '100%', background: '#f9f7f4' }}>
