@@ -1,9 +1,6 @@
     import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { LogOut } from 'lucide-react';
 
-// Simple Firebase config - using REST API instead of SDK
-const FIREBASE_DB_URL = "https://sheep-farm2-pro-default-rtdb.firebaseio.com";
-
 const calculateAge = (startDate) => {
   const start = new Date(startDate);
   const now = new Date();
