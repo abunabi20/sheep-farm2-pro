@@ -1,4 +1,4 @@
-    import React, { useState, useEffect, useCallback, useMemo } from 'react';
+=    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { LogOut } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue, remove } from 'firebase/database';
@@ -50,8 +50,7 @@ const App = () => {
     slaughterLocation: '', slaughterNotes: '', deathDate: '', ageAtDeath: '0'
   });
 
-  const [feedForm, setFeedForm] = useState({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '' });
-  const [expenseForm, setExpenseForm] = useState({ date: new Date().toISOString().split('T')[0], category: 'رواتب', amount: '' });
+
 
   useEffect(() => {
     const saved = localStorage.getItem('sheepFarmUser');
@@ -108,15 +107,12 @@ const App = () => {
   };
 
   const handleAnimalChange = useCallback((f, v) => setAnimalForm(p => ({ ...p, [f]: v })), []);
-  const handleFeedChange = useCallback((f, v) => setFeedForm(p => ({ ...p, [f]: v })), []);
-  const handleExpenseChange = useCallback((f, v) => setExpenseForm(p => ({ ...p, [f]: v })), []);
 
   const handleAddAnimal = async () => {
     if (!animalForm.number || !animalForm.birthDate) return alert('ملء البيانات');
     if (!user) return;
     
     const animalId = editingId || `${selectedType}-${Date.now()}`;
-    const animalsPath = animals[selectedType] || {};
     
     try {
       await set(ref(database, `users/${user.id}/animals/${selectedType}/${animalId}`), animalForm);
