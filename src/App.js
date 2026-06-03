@@ -28,52 +28,29 @@ try {
   console.log('EmailJS:', error.message);
 }
 
-// ============ MAIN APP ============
 const SheepFarmApp = () => {
-  // AUTH STATE
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
-
-  // LOGIN/REGISTER DATA
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [registerData, setRegisterData] = useState({ email: '', password: '', confirmPassword: '', name: '' });
-
-  // APP STATE
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [editingId, setEditingId] = useState(null);
-
-  // DATA STATE
   const [sheep, setSheep] = useState([]);
   const [feeds, setFeeds] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [sheepForm, setSheepForm] = useState({ id: '', number: '', type: 'sheep', age: '', status: 'productive', totalOffspring: 0, birthDate: '', notes: '' });
+  const [feedForm, setFeedForm] = useState({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '', quality: 'good', notes: '' });
+  const [expenseForm, setExpenseForm] = useState({ date: new Date().toISOString().split('T')[0], category: 'رواتب', description: '', amount: '', notes: '' });
 
-  // FORM STATES
-  const [sheepForm, setSheepForm] = useState({
-    id: '', number: '', type: 'sheep', age: '', status: 'productive',
-    totalOffspring: 0, birthDate: '', notes: ''
-  });
-
-  const [feedForm, setFeedForm] = useState({
-    date: new Date().toISOString().split('T')[0],
-    type: 'شعير', quantity: '', pricePerKg: '', quality: 'good', notes: ''
-  });
-
-  const [expenseForm, setExpenseForm] = useState({
-    date: new Date().toISOString().split('T')[0],
-    category: 'رواتب', description: '', amount: '', notes: ''
-  });
-
-  // ============ AUTH HANDLERS ============
   useEffect(() => {
     const savedUser = localStorage.getItem('sheepFarmUser');
     if (savedUser) setUser(JSON.parse(savedUser));
   }, []);
 
-  // ✅ FIXED: useCallback لتجنب re-renders
   const handleLoginChange = useCallback((field, value) => {
     setLoginData(prev => ({ ...prev, [field]: value }));
   }, []);
@@ -88,11 +65,7 @@ const SheepFarmApp = () => {
       alert('الرجاء إدخال البريد وكلمة المرور');
       return;
     }
-    const userData = {
-      id: loginData.email.replace(/[^a-z0-9]/g, ''),
-      email: loginData.email,
-      name: loginData.email.split('@')[0]
-    };
+    const userData = { id: loginData.email.replace(/[^a-z0-9]/g, ''), email: loginData.email, name: loginData.email.split('@')[0] };
     localStorage.setItem('sheepFarmUser', JSON.stringify(userData));
     setUser(userData);
     setLoginData({ email: '', password: '' });
@@ -108,11 +81,7 @@ const SheepFarmApp = () => {
       alert('كلمات المرور غير متطابقة');
       return;
     }
-    const userData = {
-      id: registerData.email.replace(/[^a-z0-9]/g, ''),
-      email: registerData.email,
-      name: registerData.name
-    };
+    const userData = { id: registerData.email.replace(/[^a-z0-9]/g, ''), email: registerData.email, name: registerData.name };
     localStorage.setItem('sheepFarmUser', JSON.stringify(userData));
     setUser(userData);
     setRegisterData({ email: '', password: '', confirmPassword: '', name: '' });
@@ -124,65 +93,39 @@ const SheepFarmApp = () => {
     setUser(null);
   };
 
-  // ============ DATA SYNC ============
   useEffect(() => {
     if (!user || !database) return;
     const userId = user.id;
-
-    onValue(ref(database, `${userId}/sheep`), (snapshot) => {
-      setSheep(snapshot.exists() ? Object.values(snapshot.val()) : []);
-    });
-    onValue(ref(database, `${userId}/feeds`), (snapshot) => {
-      setFeeds(snapshot.exists() ? Object.values(snapshot.val()) : []);
-    });
-    onValue(ref(database, `${userId}/expenses`), (snapshot) => {
-      setExpenses(snapshot.exists() ? Object.values(snapshot.val()) : []);
-    });
+    onValue(ref(database, `${userId}/sheep`), (snapshot) => setSheep(snapshot.exists() ? Object.values(snapshot.val()) : []));
+    onValue(ref(database, `${userId}/feeds`), (snapshot) => setFeeds(snapshot.exists() ? Object.values(snapshot.val()) : []));
+    onValue(ref(database, `${userId}/expenses`), (snapshot) => setExpenses(snapshot.exists() ? Object.values(snapshot.val()) : []));
   }, [user]);
 
-  // ============ ALERTS GENERATION ============
   const generateAlerts = useCallback(() => {
     const newAlerts = [];
-
     feeds.forEach(f => {
       const remaining = Math.ceil(parseFloat(f.quantity || 0));
       if (remaining < 10) {
-        newAlerts.push({
-          id: `feed-${f.id}`,
-          type: 'feed',
-          severity: remaining < 5 ? 'high' : 'warning',
-          message: `⚠️ علف ${f.type}: متبقي ${remaining} كيس`,
-        });
+        newAlerts.push({ id: `feed-${f.id}`, type: 'feed', severity: remaining < 5 ? 'high' : 'warning', message: `⚠️ علف ${f.type}: متبقي ${remaining} كيس` });
       }
     });
-
     sheep.forEach(s => {
       if (s.status === 'non-productive' && parseInt(s.age) > 3) {
-        newAlerts.push({
-          id: `sheep-${s.id}`,
-          type: 'sheep',
-          severity: 'warning',
-          message: `🔴 الحيوان #${s.number} عمره ${s.age} بدون إنتاج`,
-        });
+        newAlerts.push({ id: `sheep-${s.id}`, type: 'sheep', severity: 'warning', message: `🔴 الحيوان #${s.number} عمره ${s.age} بدون إنتاج` });
       }
     });
-
     setAlerts(newAlerts);
   }, [feeds, sheep]);
 
-  // ============ SAVE TO FIREBASE ============
   useEffect(() => {
     if (!user || !database) return;
     const userId = user.id;
-
     if (sheep.length > 0) set(ref(database, `${userId}/sheep`), sheep);
     if (feeds.length > 0) set(ref(database, `${userId}/feeds`), feeds);
     if (expenses.length > 0) set(ref(database, `${userId}/expenses`), expenses);
-
     generateAlerts();
   }, [user, sheep, feeds, expenses, generateAlerts]);
 
-  // ============ FORM CHANGE HANDLERS ============
   const handleSheepFormChange = useCallback((field, value) => {
     setSheepForm(prev => ({ ...prev, [field]: value }));
   }, []);
@@ -195,156 +138,96 @@ const SheepFarmApp = () => {
     setExpenseForm(prev => ({ ...prev, [field]: value }));
   }, []);
 
-  // ============ CRUD OPERATIONS ============
   const handleAddSheep = () => {
-    if (!sheepForm.number || !sheepForm.age) {
-      alert('الرجاء ملء البيانات المطلوبة');
-      return;
-    }
-
+    if (!sheepForm.number || !sheepForm.age) { alert('الرجاء ملء البيانات المطلوبة'); return; }
     if (editingId) {
       setSheep(sheep.map(s => s.id === editingId ? { ...sheepForm, id: editingId } : s));
       setEditingId(null);
     } else {
       setSheep([...sheep, { ...sheepForm, id: `sheep-${Date.now()}` }]);
     }
-
     setSheepForm({ id: '', number: '', type: 'sheep', age: '', status: 'productive', totalOffspring: 0, birthDate: '', notes: '' });
     setShowModal(false);
   };
 
   const handleAddFeed = () => {
-    if (!feedForm.quantity || !feedForm.pricePerKg) {
-      alert('الرجاء ملء البيانات');
-      return;
-    }
-
+    if (!feedForm.quantity || !feedForm.pricePerKg) { alert('الرجاء ملء البيانات'); return; }
     if (editingId) {
       setFeeds(feeds.map(f => f.id === editingId ? { ...feedForm, id: editingId } : f));
       setEditingId(null);
     } else {
       setFeeds([...feeds, { ...feedForm, id: `feed-${Date.now()}` }]);
     }
-
     setFeedForm({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '', quality: 'good', notes: '' });
     setShowModal(false);
   };
 
   const handleAddExpense = () => {
-    if (!expenseForm.amount) {
-      alert('الرجاء إدخال المبلغ');
-      return;
-    }
-
+    if (!expenseForm.amount) { alert('الرجاء إدخال المبلغ'); return; }
     if (editingId) {
       setExpenses(expenses.map(e => e.id === editingId ? { ...expenseForm, id: editingId } : e));
       setEditingId(null);
     } else {
       setExpenses([...expenses, { ...expenseForm, id: `expense-${Date.now()}` }]);
     }
-
     setExpenseForm({ date: new Date().toISOString().split('T')[0], category: 'رواتب', description: '', amount: '', notes: '' });
     setShowModal(false);
   };
 
   const handleDelete = (type, id) => {
     if (window.confirm('هل أنت متأكد من الحذف؟')) {
-      switch(type) {
-        case 'sheep': setSheep(sheep.filter(s => s.id !== id)); break;
-        case 'feed': setFeeds(feeds.filter(f => f.id !== id)); break;
-        case 'expense': setExpenses(expenses.filter(e => e.id !== id)); break;
-        default: break;
-      }
+      if (type === 'sheep') setSheep(sheep.filter(s => s.id !== id));
+      else if (type === 'feed') setFeeds(feeds.filter(f => f.id !== id));
+      else if (type === 'expense') setExpenses(expenses.filter(e => e.id !== id));
     }
   };
 
   const handleEdit = (type, id) => {
     if (type === 'sheep') {
       const item = sheep.find(s => s.id === id);
-      if (item) {
-        setSheepForm(item);
-        setEditingId(id);
-        setModalType('sheep');
-        setShowModal(true);
-      }
+      if (item) { setSheepForm(item); setEditingId(id); setModalType('sheep'); setShowModal(true); }
     } else if (type === 'feed') {
       const item = feeds.find(f => f.id === id);
-      if (item) {
-        setFeedForm(item);
-        setEditingId(id);
-        setModalType('feed');
-        setShowModal(true);
-      }
+      if (item) { setFeedForm(item); setEditingId(id); setModalType('feed'); setShowModal(true); }
     } else if (type === 'expense') {
       const item = expenses.find(e => e.id === id);
-      if (item) {
-        setExpenseForm(item);
-        setEditingId(id);
-        setModalType('expense');
-        setShowModal(true);
-      }
+      if (item) { setExpenseForm(item); setEditingId(id); setModalType('expense'); setShowModal(true); }
     }
   };
 
-  // ============ CALCULATIONS ============
   const calculations = useMemo(() => {
     const totalSheep = sheep.length;
     const producingSheep = sheep.filter(s => s.status === 'productive').length;
     const totalOffspring = sheep.reduce((sum, s) => sum + parseInt(s.totalOffspring || 0), 0);
-
     const feedCosts = feeds.reduce((sum, f) => sum + (parseFloat(f.quantity || 0) * parseFloat(f.pricePerKg || 0)), 0);
     const expenseCosts = expenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-
-    const dailyConsumption = totalSheep * 1;
-    const monthlyConsumption = dailyConsumption * 30;
-
     return {
-      totalSheep,
-      producingSheep,
-      totalOffspring,
+      totalSheep, producingSheep, totalOffspring,
       productivity: totalSheep ? ((producingSheep / totalSheep) * 100).toFixed(1) : 0,
-      feedCosts: feedCosts.toFixed(0),
-      expenseCosts: expenseCosts.toFixed(0),
+      feedCosts: feedCosts.toFixed(0), expenseCosts: expenseCosts.toFixed(0),
       totalCosts: (feedCosts + expenseCosts).toFixed(0),
-      dailyConsumption: dailyConsumption.toFixed(1),
-      monthlyConsumption: monthlyConsumption.toFixed(0)
+      dailyConsumption: (totalSheep * 1).toFixed(1),
+      monthlyConsumption: (totalSheep * 30).toFixed(0)
     };
   }, [sheep, feeds, expenses]);
 
-  // ============ RENDER LOGIN ============
-  if (!user) {
-    return (
-      <LoginScreen
-        authMode={authMode}
-        setAuthMode={setAuthMode}
-        showPassword={showPassword}
-        setShowPassword={setShowPassword}
-        loginData={loginData}
-        registerData={registerData}
-        handleLoginChange={handleLoginChange}
-        handleRegisterChange={handleRegisterChange}
-        handleLogin={handleLogin}
-        handleRegister={handleRegister}
-      />
-    );
-  }
+  if (!user) return <LoginScreen authMode={authMode} setAuthMode={setAuthMode} showPassword={showPassword} setShowPassword={setShowPassword} loginData={loginData} registerData={registerData} handleLoginChange={handleLoginChange} handleRegisterChange={handleRegisterChange} handleLogin={handleLogin} handleRegister={handleRegister} />;
 
-  // ============ MAIN APP RENDER ============
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh', background: '#f9f7f4' }}>
       <style>{`
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }
+        html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; height: 100%; }
         input:focus, select:focus { outline: none; border-color: #D4A574; box-shadow: 0 0 0 3px rgba(212, 165, 116, 0.1); }
         table { width: 100%; border-collapse: collapse; }
         th { background: #f0e8e0; color: #3D2817; padding: 12px; text-align: right; font-weight: 600; }
         td { padding: 12px; border-bottom: 1px solid #e8e2dc; }
-        tr:hover { background: #f9f7f4; }
+        tr:hover { background: #f5f3f0; }
       `}</style>
 
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} user={user} handleLogout={handleLogout} />
 
-      <div style={{ overflowY: 'auto', maxHeight: '100vh' }}>
+      <div style={{ overflowY: 'auto', maxHeight: '100vh', width: '100%', paddingLeft: '0px' }}>
         {activeTab === 'dashboard' && <Dashboard calculations={calculations} alerts={alerts} />}
         {activeTab === 'sheep' && <SheepManagement sheep={sheep} setShowModal={setShowModal} setModalType={setModalType} setSheepForm={setSheepForm} setEditingId={setEditingId} handleDelete={handleDelete} handleEdit={handleEdit} />}
         {activeTab === 'feeds' && <FeedsManagement feeds={feeds} setShowModal={setShowModal} setModalType={setModalType} setFeedForm={setFeedForm} setEditingId={setEditingId} handleDelete={handleDelete} handleEdit={handleEdit} />}
@@ -352,45 +235,23 @@ const SheepFarmApp = () => {
         {activeTab === 'alerts' && <AlertsScreen alerts={alerts} />}
       </div>
 
-      {showModal && (
-        <Modal
-          modalType={modalType}
-          showModal={showModal}
-          setShowModal={setShowModal}
-          sheepForm={sheepForm}
-          handleSheepFormChange={handleSheepFormChange}
-          handleAddSheep={handleAddSheep}
-          feedForm={feedForm}
-          handleFeedFormChange={handleFeedFormChange}
-          handleAddFeed={handleAddFeed}
-          expenseForm={expenseForm}
-          handleExpenseFormChange={handleExpenseFormChange}
-          handleAddExpense={handleAddExpense}
-          editingId={editingId}
-        />
-      )}
+      {showModal && <Modal modalType={modalType} showModal={showModal} setShowModal={setShowModal} sheepForm={sheepForm} handleSheepFormChange={handleSheepFormChange} handleAddSheep={handleAddSheep} feedForm={feedForm} handleFeedFormChange={handleFeedFormChange} handleAddFeed={handleAddFeed} expenseForm={expenseForm} handleExpenseFormChange={handleExpenseFormChange} handleAddExpense={handleAddExpense} editingId={editingId} />}
     </div>
   );
 };
 
-// ============ LOGIN SCREEN ============
 const LoginScreen = ({ authMode, setAuthMode, showPassword, setShowPassword, loginData, registerData, handleLoginChange, handleRegisterChange, handleLogin, handleRegister }) => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
     <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '500px', width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
       <h1 style={{ color: '#3D2817', textAlign: 'center', marginBottom: '10px', fontSize: '32px' }}>🐑 FarmHub Pro</h1>
       <p style={{ color: '#666', textAlign: 'center', marginBottom: '30px' }}>نظام إدارة الأغنام والماعز</p>
-
       {authMode === 'login' ? (
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
           <h2 style={{ color: '#3D2817', marginBottom: '20px', fontSize: '24px' }}>تسجيل الدخول</h2>
           <AuthInput label="البريد الإلكتروني" type="email" value={loginData.email} onChange={(e) => handleLoginChange('email', e.target.value)} />
           <PasswordInput label="كلمة المرور" value={loginData.password} onChange={(e) => handleLoginChange('password', e.target.value)} showPassword={showPassword} setShowPassword={setShowPassword} />
-          <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
-            دخول
-          </button>
-          <p style={{ textAlign: 'center', color: '#666', marginTop: '20px' }}>
-            ليس لديك حساب؟ <button type="button" onClick={() => setAuthMode('register')} style={{ background: 'none', border: 'none', color: '#D4A574', cursor: 'pointer', fontWeight: 'bold' }}>سجل الآن</button>
-          </p>
+          <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>دخول</button>
+          <p style={{ textAlign: 'center', color: '#666', marginTop: '20px' }}>ليس لديك حساب؟ <button type="button" onClick={() => setAuthMode('register')} style={{ background: 'none', border: 'none', color: '#D4A574', cursor: 'pointer', fontWeight: 'bold' }}>سجل الآن</button></p>
         </form>
       ) : (
         <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -399,19 +260,14 @@ const LoginScreen = ({ authMode, setAuthMode, showPassword, setShowPassword, log
           <AuthInput label="البريد الإلكتروني" type="email" value={registerData.email} onChange={(e) => handleRegisterChange('email', e.target.value)} />
           <PasswordInput label="كلمة المرور" value={registerData.password} onChange={(e) => handleRegisterChange('password', e.target.value)} showPassword={showPassword} setShowPassword={setShowPassword} />
           <PasswordInput label="تأكيد كلمة المرور" value={registerData.confirmPassword} onChange={(e) => handleRegisterChange('confirmPassword', e.target.value)} showPassword={showPassword} setShowPassword={setShowPassword} />
-          <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
-            إنشاء حساب
-          </button>
-          <p style={{ textAlign: 'center', color: '#666', marginTop: '20px' }}>
-            لديك حساب؟ <button type="button" onClick={() => setAuthMode('login')} style={{ background: 'none', border: 'none', color: '#D4A574', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button>
-          </p>
+          <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>إنشاء حساب</button>
+          <p style={{ textAlign: 'center', color: '#666', marginTop: '20px' }}>لديك حساب؟ <button type="button" onClick={() => setAuthMode('login')} style={{ background: 'none', border: 'none', color: '#D4A574', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button></p>
         </form>
       )}
     </div>
   </div>
 );
 
-// ============ INPUT COMPONENTS ============
 const AuthInput = React.memo(({ label, type, value, onChange }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
     <span style={{ color: '#3D2817', fontWeight: '600', fontSize: '13px' }}>{label}</span>
@@ -431,7 +287,6 @@ const PasswordInput = React.memo(({ label, value, onChange, showPassword, setSho
   </label>
 ));
 
-// ============ SIDEBAR ============
 const Sidebar = React.memo(({ activeTab, setActiveTab, user, handleLogout }) => (
   <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', position: 'fixed', width: '260px', height: '100vh', overflowY: 'auto' }}>
     <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center', paddingBottom: '15px', borderBottom: '2px solid #D4A574' }}>🐑 FarmHub</div>
@@ -451,11 +306,10 @@ const Sidebar = React.memo(({ activeTab, setActiveTab, user, handleLogout }) => 
   </div>
 ));
 
-// ============ DASHBOARD ============
 const Dashboard = React.memo(({ calculations, alerts }) => (
-  <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
-    <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>📊 لوحة التحكم</h1>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px', marginBottom: '30px' }}>
+  <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh', width: '100%' }}>
+    <h1 style={{ color: '#3D2817', marginBottom: '30px', fontSize: '28px' }}>📊 لوحة التحكم</h1>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '30px' }}>
       <KPICard label="إجمالي الثروة" value={calculations.totalSheep} unit="رأس" color="#667eea" />
       <KPICard label="الأغنام المنتجة" value={calculations.producingSheep} unit="رأس" color="#27ae60" />
       <KPICard label="معدل الإنتاجية" value={calculations.productivity} unit="%" color="#f39c12" />
@@ -491,29 +345,15 @@ const AlertsBox = React.memo(({ alerts }) => (
   </div>
 ));
 
-// ============ SHEEP MANAGEMENT ============
 const SheepManagement = React.memo(({ sheep, setShowModal, setModalType, setSheepForm, setEditingId, handleDelete, handleEdit }) => {
   const sheepList = sheep.filter(s => s.type === 'sheep');
   const goatList = sheep.filter(s => s.type === 'goat');
-
   return (
-    <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
+    <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh', width: '100%' }}>
       <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🐑 الأغنام والماعز</h1>
-      <SheepTable
-        data={sheepList}
-        title="الأغنام (Sheep)"
-        onAdd={() => { setSheepForm({ id: '', number: '', type: 'sheep', age: '', status: 'productive', totalOffspring: 0, birthDate: '', notes: '' }); setModalType('sheep'); setShowModal(true); }}
-        onEdit={(id) => handleEdit('sheep', id)}
-        onDelete={(id) => handleDelete('sheep', id)}
-      />
+      <SheepTable data={sheepList} title="الأغنام (Sheep)" onAdd={() => { setSheepForm({ id: '', number: '', type: 'sheep', age: '', status: 'productive', totalOffspring: 0, birthDate: '', notes: '' }); setModalType('sheep'); setShowModal(true); }} onEdit={(id) => handleEdit('sheep', id)} onDelete={(id) => handleDelete('sheep', id)} />
       <div style={{ marginBottom: '30px' }} />
-      <SheepTable
-        data={goatList}
-        title="الماعز (Goat)"
-        onAdd={() => { setSheepForm({ id: '', number: '', type: 'goat', age: '', status: 'productive', totalOffspring: 0, birthDate: '', notes: '' }); setModalType('sheep'); setShowModal(true); }}
-        onEdit={(id) => handleEdit('sheep', id)}
-        onDelete={(id) => handleDelete('sheep', id)}
-      />
+      <SheepTable data={goatList} title="الماعز (Goat)" onAdd={() => { setSheepForm({ id: '', number: '', type: 'goat', age: '', status: 'productive', totalOffspring: 0, birthDate: '', notes: '' }); setModalType('sheep'); setShowModal(true); }} onEdit={(id) => handleEdit('sheep', id)} onDelete={(id) => handleDelete('sheep', id)} />
     </div>
   );
 });
@@ -545,19 +385,11 @@ const SheepTable = React.memo(({ data, title, onAdd, onEdit, onDelete }) => (
               <tr key={item.id}>
                 <td>#{item.number}</td>
                 <td>{item.age} سنة</td>
-                <td>
-                  <span style={{ padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', background: item.status === 'productive' ? '#27ae6033' : '#f39c1233', color: item.status === 'productive' ? '#27ae60' : '#f39c12' }}>
-                    {item.status === 'productive' ? '✓ منتجة' : '⊘ غير منتجة'}
-                  </span>
-                </td>
+                <td><span style={{ padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', background: item.status === 'productive' ? '#27ae6033' : '#f39c1233', color: item.status === 'productive' ? '#27ae60' : '#f39c12' }}>{item.status === 'productive' ? '✓ منتجة' : '⊘ غير منتجة'}</span></td>
                 <td>{item.totalOffspring}</td>
                 <td style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={() => onEdit(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3D2817' }}>
-                    <Edit2 size={16} />
-                  </button>
-                  <button onClick={() => onDelete(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e74c3c' }}>
-                    <Trash2 size={16} />
-                  </button>
+                  <button onClick={() => onEdit(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3D2817' }}><Edit2 size={16} /></button>
+                  <button onClick={() => onDelete(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e74c3c' }}><Trash2 size={16} /></button>
                 </td>
               </tr>
             ))}
@@ -568,9 +400,8 @@ const SheepTable = React.memo(({ data, title, onAdd, onEdit, onDelete }) => (
   </div>
 ));
 
-// ============ FEEDS MANAGEMENT ============
 const FeedsManagement = React.memo(({ feeds, setShowModal, setModalType, setFeedForm, setEditingId, handleDelete, handleEdit }) => (
-  <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
+  <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh', width: '100%' }}>
     <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🌾 الأعلاف</h1>
     <div style={{ background: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.08)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -605,12 +436,8 @@ const FeedsManagement = React.memo(({ feeds, setShowModal, setModalType, setFeed
                     <td>{feed.pricePerKg}</td>
                     <td>{cost} ر.س</td>
                     <td style={{ display: 'flex', gap: '8px' }}>
-                      <button onClick={() => handleEdit('feed', feed.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3D2817' }}>
-                        <Edit2 size={16} />
-                      </button>
-                      <button onClick={() => handleDelete('feed', feed.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e74c3c' }}>
-                        <Trash2 size={16} />
-                      </button>
+                      <button onClick={() => handleEdit('feed', feed.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3D2817' }}><Edit2 size={16} /></button>
+                      <button onClick={() => handleDelete('feed', feed.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e74c3c' }}><Trash2 size={16} /></button>
                     </td>
                   </tr>
                 );
@@ -623,9 +450,8 @@ const FeedsManagement = React.memo(({ feeds, setShowModal, setModalType, setFeed
   </div>
 ));
 
-// ============ EXPENSES MANAGEMENT ============
 const ExpensesManagement = React.memo(({ expenses, setShowModal, setModalType, setExpenseForm, setEditingId, handleDelete, handleEdit }) => (
-  <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
+  <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh', width: '100%' }}>
     <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>💰 المصروفات</h1>
     <div style={{ background: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.08)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -656,12 +482,8 @@ const ExpensesManagement = React.memo(({ expenses, setShowModal, setModalType, s
                   <td>{expense.description}</td>
                   <td>{expense.amount} ر.س</td>
                   <td style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => handleEdit('expense', expense.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3D2817' }}>
-                      <Edit2 size={16} />
-                    </button>
-                    <button onClick={() => handleDelete('expense', expense.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e74c3c' }}>
-                      <Trash2 size={16} />
-                    </button>
+                    <button onClick={() => handleEdit('expense', expense.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3D2817' }}><Edit2 size={16} /></button>
+                    <button onClick={() => handleDelete('expense', expense.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e74c3c' }}><Trash2 size={16} /></button>
                   </td>
                 </tr>
               ))}
@@ -673,9 +495,8 @@ const ExpensesManagement = React.memo(({ expenses, setShowModal, setModalType, s
   </div>
 ));
 
-// ============ ALERTS SCREEN ============
 const AlertsScreen = React.memo(({ alerts }) => (
-  <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
+  <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh', width: '100%' }}>
     <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🔔 التنبيهات</h1>
     <div style={{ background: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.08)' }}>
       {alerts.length === 0 ? (
@@ -691,15 +512,12 @@ const AlertsScreen = React.memo(({ alerts }) => (
   </div>
 ));
 
-// ============ MODAL ============
 const Modal = React.memo(({ modalType, showModal, setShowModal, sheepForm, handleSheepFormChange, handleAddSheep, feedForm, handleFeedFormChange, handleAddFeed, expenseForm, handleExpenseFormChange, handleAddExpense, editingId }) => {
   if (!showModal) return null;
-
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }} onClick={() => setShowModal(false)}>
       <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '600px', width: '90%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', position: 'relative' }} onClick={e => e.stopPropagation()}>
         <button onClick={() => setShowModal(false)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer' }}>✕</button>
-
         {modalType === 'sheep' && (
           <form onSubmit={(e) => { e.preventDefault(); handleAddSheep(); }} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
             <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>{editingId ? 'تعديل الحيوان' : 'إضافة حيوان جديد'}</h2>
@@ -712,12 +530,9 @@ const Modal = React.memo(({ modalType, showModal, setShowModal, sheepForm, handl
               <FormInput label="الحالة" type="select" value={sheepForm.status} onChange={(e) => handleSheepFormChange('status', e.target.value)} options={['productive', 'non-productive', 'excluded']} />
             </div>
             <FormInput label="إجمالي المواليد" type="number" value={sheepForm.totalOffspring} onChange={(e) => handleSheepFormChange('totalOffspring', e.target.value)} />
-            <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-              {editingId ? 'تحديث' : 'إضافة'}
-            </button>
+            <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>{editingId ? 'تحديث' : 'إضافة'}</button>
           </form>
         )}
-
         {modalType === 'feed' && (
           <form onSubmit={(e) => { e.preventDefault(); handleAddFeed(); }} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
             <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>{editingId ? 'تعديل العلف' : 'إضافة علف جديد'}</h2>
@@ -729,12 +544,9 @@ const Modal = React.memo(({ modalType, showModal, setShowModal, sheepForm, handl
               <FormInput label="الكمية (كيلو)" type="number" value={feedForm.quantity} onChange={(e) => handleFeedFormChange('quantity', e.target.value)} />
               <FormInput label="السعر/كيلو" type="number" value={feedForm.pricePerKg} onChange={(e) => handleFeedFormChange('pricePerKg', e.target.value)} />
             </div>
-            <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-              {editingId ? 'تحديث' : 'إضافة'}
-            </button>
+            <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>{editingId ? 'تحديث' : 'إضافة'}</button>
           </form>
         )}
-
         {modalType === 'expense' && (
           <form onSubmit={(e) => { e.preventDefault(); handleAddExpense(); }} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
             <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>{editingId ? 'تعديل المصروف' : 'إضافة مصروف جديد'}</h2>
@@ -744,9 +556,7 @@ const Modal = React.memo(({ modalType, showModal, setShowModal, sheepForm, handl
             </div>
             <FormInput label="الوصف" type="text" value={expenseForm.description} onChange={(e) => handleExpenseFormChange('description', e.target.value)} />
             <FormInput label="المبلغ (ر.س)" type="number" value={expenseForm.amount} onChange={(e) => handleExpenseFormChange('amount', e.target.value)} />
-            <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-              {editingId ? 'تحديث' : 'إضافة'}
-            </button>
+            <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>{editingId ? 'تحديث' : 'إضافة'}</button>
           </form>
         )}
       </div>
@@ -754,7 +564,6 @@ const Modal = React.memo(({ modalType, showModal, setShowModal, sheepForm, handl
   );
 });
 
-// ============ FORM INPUT ============
 const FormInput = React.memo(({ label, type, value, onChange, options, required }) => {
   if (type === 'select') {
     return (
