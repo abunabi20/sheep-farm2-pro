@@ -1,5 +1,21 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { LogOut } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getDatabase, ref, set, onValue, remove } from 'firebase/database';
+
+// Firebase Config
+const firebaseConfig = {
+  apiKey: "AIzaSyDKVch1VTErpbv6RckVKpZC_ACWXld7ajM",
+  authDomain: "sheep-farm2-pro.firebaseapp.com",
+  databaseURL: "https://sheep-farm2-pro-default-rtdb.firebaseio.com",
+  projectId: "sheep-farm2-pro",
+  storageBucket: "sheep-farm2-pro.appspot.com",
+  messagingSenderId: "610995382085",
+  appId: "1:610995382085:web:ede6bf321d4947e9f2002c"
+};
+
+const app = initializeApp(firebaseConfig);
+const database = getDatabase(app);
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -10,18 +26,61 @@ const App = () => {
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [editingId, setEditingId] = useState(null);
-  const [sheep, setSheep] = useState([{ id: '1', number: '101', type: 'sheep', age: '2', status: 'productive', totalOffspring: 3 }]);
-  const [feeds, setFeeds] = useState([{ id: '1', date: '2024-06-04', type: 'شعير', quantity: '100', pricePerKg: '2' }]);
-  const [expenses, setExpenses] = useState([{ id: '1', date: '2024-06-04', category: 'رواتب', amount: '2000' }]);
+  const [sheep, setSheep] = useState([]);
+  const [feeds, setFeeds] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [alerts, setAlerts] = useState([]);
-  const [sheepForm, setSheepForm] = useState({ number: '', type: 'sheep', age: '', status: 'productive', totalOffspring: 0 });
+  const [sheepForm, setSheepForm] = useState({
+    number: '', type: 'sheep', ageValue: '', ageType: 'years', status: 'productive',
+    lastProduction: new Date().toISOString().split('T')[0], notes: '', exitType: 'active'
+  });
   const [feedForm, setFeedForm] = useState({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '' });
   const [expenseForm, setExpenseForm] = useState({ date: new Date().toISOString().split('T')[0], category: 'رواتب', amount: '' });
 
+  // Load User
   useEffect(() => {
     const saved = localStorage.getItem('sheepFarmUser');
     if (saved) setUser(JSON.parse(saved));
   }, []);
+
+  // Firebase Sync - Sheep
+  useEffect(() => {
+    if (user) {
+      const sheepRef = ref(database, `users/${user.id}/sheep`);
+      onValue(sheepRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          setSheep(Object.entries(data).map(([key, value]) => ({ id: key, ...value })));
+        }
+      });
+    }
+  }, [user]);
+
+  // Firebase Sync - Feeds
+  useEffect(() => {
+    if (user) {
+      const feedsRef = ref(database, `users/${user.id}/feeds`);
+      onValue(feedsRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          setFeeds(Object.entries(data).map(([key, value]) => ({ id: key, ...value })));
+        }
+      });
+    }
+  }, [user]);
+
+  // Firebase Sync - Expenses
+  useEffect(() => {
+    if (user) {
+      const expensesRef = ref(database, `users/${user.id}/expenses`);
+      onValue(expensesRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          setExpenses(Object.entries(data).map(([key, value]) => ({ id: key, ...value })));
+        }
+      });
+    }
+  }, [user]);
 
   const handleLoginChange = useCallback((f, v) => setLoginData(p => ({ ...p, [f]: v })), []);
   const handleRegisterChange = useCallback((f, v) => setRegisterData(p => ({ ...p, [f]: v })), []);
@@ -69,64 +128,90 @@ const App = () => {
   const handleFeedChange = useCallback((f, v) => setFeedForm(p => ({ ...p, [f]: v })), []);
   const handleExpenseChange = useCallback((f, v) => setExpenseForm(p => ({ ...p, [f]: v })), []);
 
-  const handleAddSheep = () => {
-    if (!sheepForm.number || !sheepForm.age) return alert('ملء البيانات');
-    if (editingId) {
-      setSheep(sheep.map(s => s.id === editingId ? { ...sheepForm, id: editingId } : s));
+  const handleAddSheep = async () => {
+    if (!sheepForm.number || !sheepForm.ageValue) return alert('ملء البيانات');
+    if (!user) return;
+    
+    const newSheep = { ...sheepForm, id: editingId || `sheep-${Date.now()}` };
+    const sheepId = editingId || `sheep-${Date.now()}`;
+    
+    try {
+      await set(ref(database, `users/${user.id}/sheep/${sheepId}`), { ...sheepForm });
+      setSheepForm({ number: '', type: 'sheep', ageValue: '', ageType: 'years', status: 'productive', lastProduction: new Date().toISOString().split('T')[0], notes: '', exitType: 'active' });
+      setShowModal(false);
       setEditingId(null);
-    } else {
-      setSheep([...sheep, { ...sheepForm, id: `sheep-${Date.now()}` }]);
+    } catch (error) {
+      alert('خطأ: ' + error.message);
     }
-    setSheepForm({ number: '', type: 'sheep', age: '', status: 'productive', totalOffspring: 0 });
-    setShowModal(false);
   };
 
-  const handleAddFeed = () => {
+  const handleAddFeed = async () => {
     if (!feedForm.quantity || !feedForm.pricePerKg) return alert('ملء البيانات');
-    if (editingId) {
-      setFeeds(feeds.map(f => f.id === editingId ? { ...feedForm, id: editingId } : f));
+    if (!user) return;
+    
+    const feedId = editingId || `feed-${Date.now()}`;
+    
+    try {
+      await set(ref(database, `users/${user.id}/feeds/${feedId}`), feedForm);
+      setFeedForm({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '' });
+      setShowModal(false);
       setEditingId(null);
-    } else {
-      setFeeds([...feeds, { ...feedForm, id: `feed-${Date.now()}` }]);
+    } catch (error) {
+      alert('خطأ: ' + error.message);
     }
-    setFeedForm({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '' });
-    setShowModal(false);
   };
 
-  const handleAddExpense = () => {
+  const handleAddExpense = async () => {
     if (!expenseForm.amount) return alert('ملء المبلغ');
-    if (editingId) {
-      setExpenses(expenses.map(e => e.id === editingId ? { ...expenseForm, id: editingId } : e));
+    if (!user) return;
+    
+    const expenseId = editingId || `expense-${Date.now()}`;
+    
+    try {
+      await set(ref(database, `users/${user.id}/expenses/${expenseId}`), expenseForm);
+      setExpenseForm({ date: new Date().toISOString().split('T')[0], category: 'رواتب', amount: '' });
+      setShowModal(false);
       setEditingId(null);
-    } else {
-      setExpenses([...expenses, { ...expenseForm, id: `expense-${Date.now()}` }]);
+    } catch (error) {
+      alert('خطأ: ' + error.message);
     }
-    setExpenseForm({ date: new Date().toISOString().split('T')[0], category: 'رواتب', amount: '' });
-    setShowModal(false);
   };
 
-  const handleDelete = (type, id) => {
+  const handleDelete = async (type, id) => {
     if (!window.confirm('حذف؟')) return;
-    if (type === 'sheep') setSheep(sheep.filter(s => s.id !== id));
-    else if (type === 'feed') setFeeds(feeds.filter(f => f.id !== id));
-    else if (type === 'expense') setExpenses(expenses.filter(e => e.id !== id));
+    if (!user) return;
+    
+    try {
+      if (type === 'sheep') await remove(ref(database, `users/${user.id}/sheep/${id}`));
+      else if (type === 'feed') await remove(ref(database, `users/${user.id}/feeds/${id}`));
+      else if (type === 'expense') await remove(ref(database, `users/${user.id}/expenses/${id}`));
+    } catch (error) {
+      alert('خطأ: ' + error.message);
+    }
   };
 
   const handleEdit = (type, id) => {
-    if (type === 'sheep') { const item = sheep.find(s => s.id === id); if (item) { setSheepForm(item); setEditingId(id); setModalType('sheep'); setShowModal(true); } }
-    else if (type === 'feed') { const item = feeds.find(f => f.id === id); if (item) { setFeedForm(item); setEditingId(id); setModalType('feed'); setShowModal(true); } }
-    else if (type === 'expense') { const item = expenses.find(e => e.id === id); if (item) { setExpenseForm(item); setEditingId(id); setModalType('expense'); setShowModal(true); } }
+    if (type === 'sheep') {
+      const item = sheep.find(s => s.id === id);
+      if (item) { setSheepForm(item); setEditingId(id); setModalType('sheep'); setShowModal(true); }
+    } else if (type === 'feed') {
+      const item = feeds.find(f => f.id === id);
+      if (item) { setFeedForm(item); setEditingId(id); setModalType('feed'); setShowModal(true); }
+    } else if (type === 'expense') {
+      const item = expenses.find(e => e.id === id);
+      if (item) { setExpenseForm(item); setEditingId(id); setModalType('expense'); setShowModal(true); }
+    }
   };
 
   const calculations = useMemo(() => {
-    const totalSheep = sheep.length;
-    const producingSheep = sheep.filter(s => s.status === 'productive').length;
+    const activeSheep = sheep.filter(s => s.exitType === 'active');
+    const producingSheep = activeSheep.filter(s => s.status === 'productive').length;
     const feedCosts = feeds.reduce((sum, f) => sum + (parseFloat(f.quantity || 0) * parseFloat(f.pricePerKg || 0)), 0);
     const expenseCosts = expenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
     return {
-      totalSheep,
+      totalSheep: activeSheep.length,
       producingSheep,
-      productivity: totalSheep ? ((producingSheep / totalSheep) * 100).toFixed(1) : 0,
+      productivity: activeSheep.length ? ((producingSheep / activeSheep.length) * 100).toFixed(1) : 0,
       totalCosts: (feedCosts + expenseCosts).toFixed(0),
     };
   }, [sheep, feeds, expenses]);
@@ -194,23 +279,38 @@ const App = () => {
         return (
           <div style={{ padding: '30px' }}>
             <h1>🐑 الأغنام</h1>
-            <button onClick={() => { setSheepForm({ number: '', type: 'sheep', age: '', status: 'productive', totalOffspring: 0 }); setModalType('sheep'); setShowModal(true); }} style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>+ إضافة</button>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <button onClick={() => { setSheepForm({ number: '', type: 'sheep', ageValue: '', ageType: 'years', status: 'productive', lastProduction: new Date().toISOString().split('T')[0], notes: '', exitType: 'active' }); setModalType('sheep'); setShowModal(true); setEditingId(null); }} style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>+ إضافة</button>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
                 <tr style={{ background: '#f0f0f0' }}>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>الرقم</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>السن</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>الحالة</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>الإجراءات</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>النوع</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>الرقم</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>السن</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>الحالة</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>آخر إنتاج</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>ملاحظات</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
-                {sheep.map(s => <tr key={s.id} style={{ borderBottom: '1px solid #ddd' }}>
-                  <td style={{ padding: '10px' }}>{s.number}</td>
-                  <td style={{ padding: '10px' }}>{s.age}</td>
-                  <td style={{ padding: '10px' }}>{s.status === 'productive' ? '✓' : '✗'}</td>
-                  <td style={{ padding: '10px' }}><button onClick={() => handleEdit('sheep', s.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#8B6F47' }}>تعديل</button><button onClick={() => handleDelete('sheep', s.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'red' }}>حذف</button></td>
-                </tr>)}
+                {sheep.map(s => (
+                  <tr key={s.id} style={{ borderBottom: '1px solid #ddd', background: s.type === 'sheep' ? '#f9f3f0' : '#f0f9f3' }}>
+                    <td style={{ padding: '8px', fontWeight: 'bold', color: s.type === 'sheep' ? '#8B4513' : '#228B22' }}>
+                      {s.type === 'sheep' ? '🐑 ضان' : '🐐 ماعز'}
+                    </td>
+                    <td style={{ padding: '8px' }}>{s.number}</td>
+                    <td style={{ padding: '8px' }}>{s.ageValue} {s.ageType === 'months' ? 'شهر' : 'سنة'}</td>
+                    <td style={{ padding: '8px', color: s.status === 'productive' ? '#27ae60' : '#e74c3c' }}>
+                      {s.status === 'productive' ? '✓ منتجة' : '⊘ غير منتجة'}
+                    </td>
+                    <td style={{ padding: '8px' }}>{s.lastProduction}</td>
+                    <td style={{ padding: '8px', fontSize: '11px' }}>{s.notes ? s.notes.substring(0, 20) + '...' : '-'}</td>
+                    <td style={{ padding: '8px' }}>
+                      <button onClick={() => handleEdit('sheep', s.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#8B6F47' }}>✏️</button>
+                      <button onClick={() => handleDelete('sheep', s.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'red' }}>🗑️</button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -219,7 +319,7 @@ const App = () => {
         return (
           <div style={{ padding: '30px' }}>
             <h1>🌾 الأعلاف</h1>
-            <button onClick={() => { setFeedForm({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '' }); setModalType('feed'); setShowModal(true); }} style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>+ إضافة</button>
+            <button onClick={() => { setFeedForm({ date: new Date().toISOString().split('T')[0], type: 'شعير', quantity: '', pricePerKg: '' }); setModalType('feed'); setShowModal(true); setEditingId(null); }} style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>+ إضافة</button>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f0f0f0' }}>
@@ -236,7 +336,7 @@ const App = () => {
                   <td style={{ padding: '10px' }}>{f.type}</td>
                   <td style={{ padding: '10px' }}>{f.quantity}</td>
                   <td style={{ padding: '10px' }}>{f.pricePerKg}</td>
-                  <td style={{ padding: '10px' }}><button onClick={() => handleEdit('feed', f.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#8B6F47' }}>تعديل</button><button onClick={() => handleDelete('feed', f.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'red' }}>حذف</button></td>
+                  <td style={{ padding: '10px' }}><button onClick={() => handleEdit('feed', f.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#8B6F47' }}>✏️</button><button onClick={() => handleDelete('feed', f.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'red' }}>🗑️</button></td>
                 </tr>)}
               </tbody>
             </table>
@@ -246,7 +346,7 @@ const App = () => {
         return (
           <div style={{ padding: '30px' }}>
             <h1>💰 المصروفات</h1>
-            <button onClick={() => { setExpenseForm({ date: new Date().toISOString().split('T')[0], category: 'رواتب', amount: '' }); setModalType('expense'); setShowModal(true); }} style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>+ إضافة</button>
+            <button onClick={() => { setExpenseForm({ date: new Date().toISOString().split('T')[0], category: 'رواتب', amount: '' }); setModalType('expense'); setShowModal(true); setEditingId(null); }} style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>+ إضافة</button>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f0f0f0' }}>
@@ -261,7 +361,7 @@ const App = () => {
                   <td style={{ padding: '10px' }}>{e.date}</td>
                   <td style={{ padding: '10px' }}>{e.category}</td>
                   <td style={{ padding: '10px' }}>{e.amount}</td>
-                  <td style={{ padding: '10px' }}><button onClick={() => handleEdit('expense', e.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#8B6F47' }}>تعديل</button><button onClick={() => handleDelete('expense', e.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'red' }}>حذف</button></td>
+                  <td style={{ padding: '10px' }}><button onClick={() => handleEdit('expense', e.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#8B6F47' }}>✏️</button><button onClick={() => handleDelete('expense', e.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'red' }}>🗑️</button></td>
                 </tr>)}
               </tbody>
             </table>
@@ -296,20 +396,36 @@ const App = () => {
       </div>
       {showModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }} onClick={() => setShowModal(false)}>
-          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '600px', width: '90%', position: 'relative' }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '600px', width: '90%', maxHeight: '90vh', overflowY: 'auto', position: 'relative' }} onClick={e => e.stopPropagation()}>
             <button onClick={() => setShowModal(false)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer' }}>✕</button>
             {modalType === 'sheep' && (
               <form onSubmit={(e) => { e.preventDefault(); handleAddSheep(); }} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>الأغنام</h2>
-                <input type="text" placeholder="الرقم" value={sheepForm.number} onChange={(e) => handleSheepChange('number', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-                <select value={sheepForm.type} onChange={(e) => handleSheepChange('type', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }}>
-                  <option value="sheep">ضان</option>
-                  <option value="goat">ماعز</option>
-                </select>
-                <input type="number" placeholder="السن" value={sheepForm.age} onChange={(e) => handleSheepChange('age', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+                <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>تسجيل الأغنام</h2>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <input type="text" placeholder="الرقم" value={sheepForm.number} onChange={(e) => handleSheepChange('number', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+                  <select value={sheepForm.type} onChange={(e) => handleSheepChange('type', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }}>
+                    <option value="sheep">ضان</option>
+                    <option value="goat">ماعز</option>
+                  </select>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <input type="number" placeholder="قيمة السن" value={sheepForm.ageValue} onChange={(e) => handleSheepChange('ageValue', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+                  <select value={sheepForm.ageType} onChange={(e) => handleSheepChange('ageType', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }}>
+                    <option value="months">شهور</option>
+                    <option value="years">سنوات</option>
+                  </select>
+                </div>
                 <select value={sheepForm.status} onChange={(e) => handleSheepChange('status', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }}>
                   <option value="productive">منتجة</option>
                   <option value="non-productive">غير منتجة</option>
+                </select>
+                <input type="date" value={sheepForm.lastProduction} onChange={(e) => handleSheepChange('lastProduction', e.target.value)} placeholder="آخر إنتاج" style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+                <textarea placeholder="ملاحظات (اختياري)" value={sheepForm.notes} onChange={(e) => handleSheepChange('notes', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', minHeight: '60px' }} />
+                <select value={sheepForm.exitType} onChange={(e) => handleSheepChange('exitType', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }}>
+                  <option value="active">نشط</option>
+                  <option value="sold">مباع</option>
+                  <option value="slaughtered">مذبوح</option>
+                  <option value="dead">متوفي</option>
                 </select>
                 <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>حفظ</button>
               </form>
@@ -321,9 +437,10 @@ const App = () => {
                 <select value={feedForm.type} onChange={(e) => handleFeedChange('type', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }}>
                   <option value="شعير">شعير</option>
                   <option value="برسيم">برسيم</option>
+                  <option value="مكعب">مكعب</option>
                 </select>
-                <input type="number" placeholder="الكمية" value={feedForm.quantity} onChange={(e) => handleFeedChange('quantity', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-                <input type="number" placeholder="السعر" value={feedForm.pricePerKg} onChange={(e) => handleFeedChange('pricePerKg', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+                <input type="number" placeholder="الكمية (كيلو)" value={feedForm.quantity} onChange={(e) => handleFeedChange('quantity', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+                <input type="number" placeholder="السعر/كيلو" value={feedForm.pricePerKg} onChange={(e) => handleFeedChange('pricePerKg', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
                 <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>حفظ</button>
               </form>
             )}
@@ -334,6 +451,7 @@ const App = () => {
                 <select value={expenseForm.category} onChange={(e) => handleExpenseChange('category', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }}>
                   <option value="رواتب">رواتب</option>
                   <option value="أعلاف">أعلاف</option>
+                  <option value="طبيب">طبيب بيطري</option>
                   <option value="أخرى">أخرى</option>
                 </select>
                 <input type="number" placeholder="المبلغ" value={expenseForm.amount} onChange={(e) => handleExpenseChange('amount', e.target.value)} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
@@ -348,3 +466,5 @@ const App = () => {
 };
 
 export default App;
+
+    
