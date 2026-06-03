@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertCircle, Bell, Download, Plus, Trash2, LogOut, Edit2, Eye, EyeOff } from 'lucide-react';
+import { Bell, Plus, Trash2, LogOut, Edit2, Eye, EyeOff } from 'lucide-react';
 import emailjs from '@emailjs/browser';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
@@ -35,7 +35,7 @@ const SheepFarmApp = () => {
   const [authMode, setAuthMode] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
 
-  // ✅ FIXED: استخدم useMemo لـ initial state
+  // LOGIN/REGISTER DATA
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [registerData, setRegisterData] = useState({ email: '', password: '', confirmPassword: '', name: '' });
 
@@ -67,13 +67,13 @@ const SheepFarmApp = () => {
     category: 'رواتب', description: '', amount: '', notes: ''
   });
 
-  // ============ AUTH HANDLERS - ✅ FIXED ============
+  // ============ AUTH HANDLERS ============
   useEffect(() => {
     const savedUser = localStorage.getItem('sheepFarmUser');
     if (savedUser) setUser(JSON.parse(savedUser));
   }, []);
 
-  // ✅ استخدم useCallback لتجنب re-renders
+  // ✅ FIXED: useCallback لتجنب re-renders
   const handleLoginChange = useCallback((field, value) => {
     setLoginData(prev => ({ ...prev, [field]: value }));
   }, []);
@@ -140,22 +140,10 @@ const SheepFarmApp = () => {
     });
   }, [user]);
 
-  useEffect(() => {
-    if (!user || !database) return;
-    const userId = user.id;
-
-    if (sheep.length > 0) set(ref(database, `${userId}/sheep`), sheep);
-    if (feeds.length > 0) set(ref(database, `${userId}/feeds`), feeds);
-    if (expenses.length > 0) set(ref(database, `${userId}/expenses`), expenses);
-
-    generateAlerts();
-  }, [user, sheep, feeds, expenses]);
-
-  // ============ ALERTS ============
+  // ============ ALERTS GENERATION ============
   const generateAlerts = useCallback(() => {
     const newAlerts = [];
 
-    // تنبيهات الأعلاف
     feeds.forEach(f => {
       const remaining = Math.ceil(parseFloat(f.quantity || 0));
       if (remaining < 10) {
@@ -168,7 +156,6 @@ const SheepFarmApp = () => {
       }
     });
 
-    // تنبيهات الأغنام
     sheep.forEach(s => {
       if (s.status === 'non-productive' && parseInt(s.age) > 3) {
         newAlerts.push({
@@ -183,7 +170,19 @@ const SheepFarmApp = () => {
     setAlerts(newAlerts);
   }, [feeds, sheep]);
 
-  // ============ FORM CHANGE HANDLERS - ✅ FIXED ============
+  // ============ SAVE TO FIREBASE ============
+  useEffect(() => {
+    if (!user || !database) return;
+    const userId = user.id;
+
+    if (sheep.length > 0) set(ref(database, `${userId}/sheep`), sheep);
+    if (feeds.length > 0) set(ref(database, `${userId}/feeds`), feeds);
+    if (expenses.length > 0) set(ref(database, `${userId}/expenses`), expenses);
+
+    generateAlerts();
+  }, [user, sheep, feeds, expenses, generateAlerts]);
+
+  // ============ FORM CHANGE HANDLERS ============
   const handleSheepFormChange = useCallback((field, value) => {
     setSheepForm(prev => ({ ...prev, [field]: value }));
   }, []);
@@ -308,8 +307,7 @@ const SheepFarmApp = () => {
       expenseCosts: expenseCosts.toFixed(0),
       totalCosts: (feedCosts + expenseCosts).toFixed(0),
       dailyConsumption: dailyConsumption.toFixed(1),
-      monthlyConsumption: monthlyConsumption.toFixed(0),
-      avgOffspringPerSheep: totalSheep ? (totalOffspring / totalSheep).toFixed(1) : 0
+      monthlyConsumption: monthlyConsumption.toFixed(0)
     };
   }, [sheep, feeds, expenses]);
 
@@ -375,9 +373,7 @@ const SheepFarmApp = () => {
   );
 };
 
-// ============ COMPONENTS ============
-
-// LOGIN SCREEN
+// ============ LOGIN SCREEN ============
 const LoginScreen = ({ authMode, setAuthMode, showPassword, setShowPassword, loginData, registerData, handleLoginChange, handleRegisterChange, handleLogin, handleRegister }) => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
     <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '500px', width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
@@ -387,19 +383,8 @@ const LoginScreen = ({ authMode, setAuthMode, showPassword, setShowPassword, log
       {authMode === 'login' ? (
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
           <h2 style={{ color: '#3D2817', marginBottom: '20px', fontSize: '24px' }}>تسجيل الدخول</h2>
-          <AuthInput
-            label="البريد الإلكتروني"
-            type="email"
-            value={loginData.email}
-            onChange={(e) => handleLoginChange('email', e.target.value)}
-          />
-          <PasswordInput
-            label="كلمة المرور"
-            value={loginData.password}
-            onChange={(e) => handleLoginChange('password', e.target.value)}
-            showPassword={showPassword}
-            setShowPassword={setShowPassword}
-          />
+          <AuthInput label="البريد الإلكتروني" type="email" value={loginData.email} onChange={(e) => handleLoginChange('email', e.target.value)} />
+          <PasswordInput label="كلمة المرور" value={loginData.password} onChange={(e) => handleLoginChange('password', e.target.value)} showPassword={showPassword} setShowPassword={setShowPassword} />
           <button type="submit" style={{ background: 'linear-gradient(90deg, #8B6F47, #D4A574)', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
             دخول
           </button>
@@ -426,7 +411,7 @@ const LoginScreen = ({ authMode, setAuthMode, showPassword, setShowPassword, log
   </div>
 );
 
-// INPUT COMPONENTS
+// ============ INPUT COMPONENTS ============
 const AuthInput = React.memo(({ label, type, value, onChange }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
     <span style={{ color: '#3D2817', fontWeight: '600', fontSize: '13px' }}>{label}</span>
@@ -438,24 +423,15 @@ const PasswordInput = React.memo(({ label, value, onChange, showPassword, setSho
   <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }}>
     <span style={{ color: '#3D2817', fontWeight: '600', fontSize: '13px' }}>{label}</span>
     <div style={{ position: 'relative' }}>
-      <input
-        type={showPassword ? 'text' : 'password'}
-        value={value}
-        onChange={onChange}
-        style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontFamily: 'inherit', width: '100%', paddingRight: '40px' }}
-      />
-      <button
-        type="button"
-        onClick={() => setShowPassword(!showPassword)}
-        style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer' }}
-      >
+      <input type={showPassword ? 'text' : 'password'} value={value} onChange={onChange} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontFamily: 'inherit', width: '100%', paddingRight: '40px' }} />
+      <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer' }}>
         {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
       </button>
     </div>
   </label>
 ));
 
-// SIDEBAR
+// ============ SIDEBAR ============
 const Sidebar = React.memo(({ activeTab, setActiveTab, user, handleLogout }) => (
   <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', position: 'fixed', width: '260px', height: '100vh', overflowY: 'auto' }}>
     <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center', paddingBottom: '15px', borderBottom: '2px solid #D4A574' }}>🐑 FarmHub</div>
@@ -475,7 +451,7 @@ const Sidebar = React.memo(({ activeTab, setActiveTab, user, handleLogout }) => 
   </div>
 ));
 
-// DASHBOARD
+// ============ DASHBOARD ============
 const Dashboard = React.memo(({ calculations, alerts }) => (
   <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
     <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>📊 لوحة التحكم</h1>
@@ -515,7 +491,7 @@ const AlertsBox = React.memo(({ alerts }) => (
   </div>
 ));
 
-// SHEEP MANAGEMENT
+// ============ SHEEP MANAGEMENT ============
 const SheepManagement = React.memo(({ sheep, setShowModal, setModalType, setSheepForm, setEditingId, handleDelete, handleEdit }) => {
   const sheepList = sheep.filter(s => s.type === 'sheep');
   const goatList = sheep.filter(s => s.type === 'goat');
@@ -523,7 +499,6 @@ const SheepManagement = React.memo(({ sheep, setShowModal, setModalType, setShee
   return (
     <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
       <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🐑 الأغنام والماعز</h1>
-
       <SheepTable
         data={sheepList}
         title="الأغنام (Sheep)"
@@ -531,9 +506,7 @@ const SheepManagement = React.memo(({ sheep, setShowModal, setModalType, setShee
         onEdit={(id) => handleEdit('sheep', id)}
         onDelete={(id) => handleDelete('sheep', id)}
       />
-
       <div style={{ marginBottom: '30px' }} />
-
       <SheepTable
         data={goatList}
         title="الماعز (Goat)"
@@ -595,7 +568,7 @@ const SheepTable = React.memo(({ data, title, onAdd, onEdit, onDelete }) => (
   </div>
 ));
 
-// FEEDS MANAGEMENT
+// ============ FEEDS MANAGEMENT ============
 const FeedsManagement = React.memo(({ feeds, setShowModal, setModalType, setFeedForm, setEditingId, handleDelete, handleEdit }) => (
   <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
     <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🌾 الأعلاف</h1>
@@ -650,7 +623,7 @@ const FeedsManagement = React.memo(({ feeds, setShowModal, setModalType, setFeed
   </div>
 ));
 
-// EXPENSES MANAGEMENT
+// ============ EXPENSES MANAGEMENT ============
 const ExpensesManagement = React.memo(({ expenses, setShowModal, setModalType, setExpenseForm, setEditingId, handleDelete, handleEdit }) => (
   <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
     <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>💰 المصروفات</h1>
@@ -700,7 +673,7 @@ const ExpensesManagement = React.memo(({ expenses, setShowModal, setModalType, s
   </div>
 ));
 
-// ALERTS SCREEN
+// ============ ALERTS SCREEN ============
 const AlertsScreen = React.memo(({ alerts }) => (
   <div style={{ padding: '30px', background: 'linear-gradient(135deg, #f5f3f0 0%, #efe8e2 100%)', minHeight: '100vh' }}>
     <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🔔 التنبيهات</h1>
@@ -718,7 +691,7 @@ const AlertsScreen = React.memo(({ alerts }) => (
   </div>
 ));
 
-// MODAL
+// ============ MODAL ============
 const Modal = React.memo(({ modalType, showModal, setShowModal, sheepForm, handleSheepFormChange, handleAddSheep, feedForm, handleFeedFormChange, handleAddFeed, expenseForm, handleExpenseFormChange, handleAddExpense, editingId }) => {
   if (!showModal) return null;
 
@@ -781,7 +754,7 @@ const Modal = React.memo(({ modalType, showModal, setShowModal, sheepForm, handl
   );
 });
 
-// FORM INPUT
+// ============ FORM INPUT ============
 const FormInput = React.memo(({ label, type, value, onChange, options, required }) => {
   if (type === 'select') {
     return (
