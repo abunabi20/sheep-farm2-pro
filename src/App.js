@@ -51,6 +51,7 @@ const App = () => {
   const [newTypeName, setNewTypeName] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -144,21 +145,33 @@ const App = () => {
   };
 
   const handleSelectAnimalType = (type) => {
-    // حمّل البيانات أولاً ثم غيّر النوع
-    const savedAnimals = localStorage.getItem(getStorageKey(user.id, type));
-    if (savedAnimals) {
-      try {
-        setAnimals(JSON.parse(savedAnimals));
-      } catch (e) {
-        setAnimals({ [type]: {} });
-      }
-    } else {
-      setAnimals({ [type]: {} });
-    }
+    setIsLoading(true);
     
-    setSelectedAnimalType(type);
-    if (user) {
-      localStorage.setItem(`selectedType_${user.id}`, type);
+    try {
+      // حمّل البيانات أولاً ثم غيّر النوع
+      const savedAnimals = localStorage.getItem(getStorageKey(user.id, type));
+      if (savedAnimals) {
+        try {
+          const parsed = JSON.parse(savedAnimals);
+          setAnimals(prev => ({ ...prev, [type]: parsed }));
+        } catch (e) {
+          console.error('Parse error:', e);
+          setAnimals(prev => ({ ...prev, [type]: {} }));
+        }
+      } else {
+        setAnimals(prev => ({ ...prev, [type]: {} }));
+      }
+      
+      setSelectedAnimalType(type);
+      if (user) {
+        localStorage.setItem(`selectedType_${user.id}`, type);
+      }
+    } catch (error) {
+      console.error('Error loading animal type:', error);
+      setAnimals(prev => ({ ...prev, [type]: {} }));
+      setSelectedAnimalType(type);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -461,6 +474,14 @@ const App = () => {
 
       {/* المحتوى الرئيسي */}
       <div style={{ marginLeft: '260px', overflowY: 'auto', maxHeight: '100vh', width: 'calc(100% - 260px)', background: '#f9f7f4', padding: '30px' }}>
+        {isLoading && (
+          <div style={{ textAlign: 'center', padding: '50px', color: '#999', fontSize: '16px' }}>
+            ⏳ جاري التحميل...
+          </div>
+        )}
+        
+        {!isLoading && (
+          <>
         <h1 style={{ marginBottom: '20px' }}>
           {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
         </h1>
@@ -529,6 +550,8 @@ const App = () => {
             <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>لا توجد حيوانات مسجلة</div>
           )}
         </div>
+        </>
+        )}
       </div>
 
       {/* Modal التسجيل */}
