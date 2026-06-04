@@ -474,14 +474,6 @@ const App = () => {
 
       {/* المحتوى الرئيسي */}
       <div style={{ marginLeft: '260px', overflowY: 'auto', maxHeight: '100vh', width: 'calc(100% - 260px)', background: '#f9f7f4', padding: '30px' }}>
-        {isLoading && (
-          <div style={{ textAlign: 'center', padding: '50px', color: '#999', fontSize: '16px' }}>
-            ⏳ جاري التحميل...
-          </div>
-        )}
-        
-        {!isLoading && (
-          <>
         <h1 style={{ marginBottom: '20px' }}>
           {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
         </h1>
@@ -550,8 +542,6 @@ const App = () => {
             <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>لا توجد حيوانات مسجلة</div>
           )}
         </div>
-        </>
-        )}
       </div>
 
       {/* Modal التسجيل */}
