@@ -47,10 +47,6 @@ const App = () => {
   const [selectedAnimal, setSelectedAnimal] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [animals, setAnimals] = useState({});
-  const [showAddType, setShowAddType] = useState(false);
-  const [newTypeName, setNewTypeName] = useState('');
-  const [loginError, setLoginError] = useState('');
-  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [filterType, setFilterType] = useState('all'); // Filter for viewing
   
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -135,7 +131,6 @@ const App = () => {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    setLoginError('');
     
     const userFound = findUserByEmail(loginData.email);
     
@@ -152,7 +147,7 @@ const App = () => {
 
     const userData = allUsers[userFound.userId];
     if (loginData.password !== userData.password) {
-      setLoginError('الباسورد غير صحيح!');
+      alert('الباسورد غير صحيح!');
       return;
     }
 
@@ -162,32 +157,6 @@ const App = () => {
     setLoginData({ email: '', password: '' });
   };
 
-  const handleSelectAnimalType = (type) => {
-    try {
-      // حمّل البيانات أولاً ثم غيّر النوع
-      const savedAnimals = localStorage.getItem(getStorageKey(user.id, type));
-      if (savedAnimals) {
-        try {
-          const parsed = JSON.parse(savedAnimals);
-          setAnimals(prev => ({ ...prev, [type]: parsed }));
-        } catch (e) {
-          console.error('Parse error:', e);
-          setAnimals(prev => ({ ...prev, [type]: {} }));
-        }
-      } else {
-        setAnimals(prev => ({ ...prev, [type]: {} }));
-      }
-      
-      setSelectedAnimalType(type);
-      if (user) {
-        localStorage.setItem(`selectedType_${user.id}`, type);
-      }
-    } catch (error) {
-      console.error('Error loading animal type:', error);
-      setAnimals(prev => ({ ...prev, [type]: {} }));
-      setSelectedAnimalType(type);
-    }
-  };
 
   const handleChangePassword = (e) => {
     e.preventDefault();
@@ -285,35 +254,6 @@ const App = () => {
     alert('✓ تم الحفظ بنجاح!');
   };
 
-  const handleAddType = () => {
-    if (!newTypeName) return alert('أدخل اسم النوع');
-    if (animalTypes.includes(newTypeName)) return alert('النوع موجود بالفعل');
-    
-    const updated = [...animalTypes, newTypeName];
-    setAnimalTypes(updated);
-    if (user) localStorage.setItem(`animalTypes_${user.id}`, JSON.stringify(updated));
-    
-    // إضافة النوع الجديد مع الحفاظ على البيانات السابقة
-    setAnimals(prev => {
-      const newAnimals = { ...prev };
-      newAnimals[newTypeName] = {};
-      
-      // حفظ في localStorage
-      if (user) {
-        localStorage.setItem(getStorageKey(user.id, newTypeName), JSON.stringify(newAnimals[newTypeName]));
-      }
-      return newAnimals;
-    });
-    
-    // الانتقال للنوع الجديد
-    setTimeout(() => {
-      setSelectedAnimalType(newTypeName);
-      if (user) localStorage.setItem(`selectedType_${user.id}`, newTypeName);
-    }, 100);
-    
-    setNewTypeName('');
-    setShowAddType(false);
-  };
 
   const handleDeleteAnimal = (id) => {
     if (!window.confirm('هل تريد حذف هذا الحيوان؟')) return;
