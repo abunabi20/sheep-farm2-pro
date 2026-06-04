@@ -259,25 +259,28 @@ const App = () => {
   const handleAddType = () => {
     if (!newTypeName) return alert('أدخل اسم النوع');
     if (animalTypes.includes(newTypeName)) return alert('النوع موجود بالفعل');
+    
     const updated = [...animalTypes, newTypeName];
     setAnimalTypes(updated);
     if (user) localStorage.setItem(`animalTypes_${user.id}`, JSON.stringify(updated));
     
-    // تحميل البيانات للنوع الجديد
-    const savedAnimals = localStorage.getItem(getStorageKey(user.id, newTypeName));
-    if (savedAnimals) {
-      try {
-        setAnimals(JSON.parse(savedAnimals));
-      } catch (e) {
-        setAnimals({ [newTypeName]: {} });
+    // إضافة النوع الجديد مع الحفاظ على البيانات السابقة
+    setAnimals(prev => {
+      const newAnimals = { ...prev };
+      newAnimals[newTypeName] = {};
+      
+      // حفظ في localStorage
+      if (user) {
+        localStorage.setItem(getStorageKey(user.id, newTypeName), JSON.stringify(newAnimals[newTypeName]));
       }
-    } else {
-      setAnimals({ [newTypeName]: {} });
-    }
+      return newAnimals;
+    });
     
     // الانتقال للنوع الجديد
-    setSelectedAnimalType(newTypeName);
-    localStorage.setItem(`selectedType_${user.id}`, newTypeName);
+    setTimeout(() => {
+      setSelectedAnimalType(newTypeName);
+      if (user) localStorage.setItem(`selectedType_${user.id}`, newTypeName);
+    }, 100);
     
     setNewTypeName('');
     setShowAddType(false);
@@ -312,6 +315,7 @@ const App = () => {
   };
 
   const sortedAnimals = useMemo(() => {
+    if (!selectedAnimalType || !animals[selectedAnimalType]) return [];
     const typeAnimals = animals[selectedAnimalType] || {};
     return Object.entries(typeAnimals)
       .map(([id, data]) => ({ id, ...data }))
@@ -319,6 +323,12 @@ const App = () => {
   }, [animals, selectedAnimalType]);
 
   const typeCount = useMemo(() => {
+    if (!selectedAnimalType || !animals[selectedAnimalType]) {
+      return {
+        total: 0, active: 0, productive: 0, sick: 0,
+        dead: 0, sold: 0, charity: 0, freezer: 0,
+      };
+    }
     const typeAnimals = animals[selectedAnimalType] || {};
     const total = Object.keys(typeAnimals).length;
     
