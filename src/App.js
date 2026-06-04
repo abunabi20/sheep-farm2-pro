@@ -51,7 +51,6 @@ const App = () => {
   const [newTypeName, setNewTypeName] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -145,8 +144,6 @@ const App = () => {
   };
 
   const handleSelectAnimalType = (type) => {
-    setIsLoading(true);
-    
     try {
       // حمّل البيانات أولاً ثم غيّر النوع
       const savedAnimals = localStorage.getItem(getStorageKey(user.id, type));
@@ -170,8 +167,6 @@ const App = () => {
       console.error('Error loading animal type:', error);
       setAnimals(prev => ({ ...prev, [type]: {} }));
       setSelectedAnimalType(type);
-    } finally {
-      setIsLoading(false);
     }
   };
 
