@@ -99,10 +99,28 @@ const App = () => {
 
   // حفظ البيانات في localStorage عند التغيير
   useEffect(() => {
-    if (user && selectedAnimalType && Object.keys(animals).length > 0) {
-      localStorage.setItem(getStorageKey(user.id, selectedAnimalType), JSON.stringify(animals));
+    if (user && selectedAnimalType && animals[selectedAnimalType]) {
+      localStorage.setItem(getStorageKey(user.id, selectedAnimalType), JSON.stringify(animals[selectedAnimalType]));
     }
   }, [animals, user, selectedAnimalType]);
+
+  // تحميل البيانات عند تغيير النوع المختار
+  useEffect(() => {
+    if (user && selectedAnimalType) {
+      const savedAnimals = localStorage.getItem(getStorageKey(user.id, selectedAnimalType));
+      if (savedAnimals) {
+        try {
+          const parsed = JSON.parse(savedAnimals);
+          setAnimals(prev => ({ ...prev, [selectedAnimalType]: parsed }));
+        } catch (e) {
+          console.error('Error parsing animals:', e);
+          setAnimals(prev => ({ ...prev, [selectedAnimalType]: {} }));
+        }
+      } else {
+        setAnimals(prev => ({ ...prev, [selectedAnimalType]: {} }));
+      }
+    }
+  }, [user, selectedAnimalType]);
 
   const findUserByEmail = (email) => {
     const lowerEmail = email.toLowerCase().trim();
