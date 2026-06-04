@@ -47,6 +47,7 @@ const App = () => {
   const [selectedAnimal, setSelectedAnimal] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [animals, setAnimals] = useState({});
+  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [filterType, setFilterType] = useState('all'); // Filter for viewing
   
   const [showAdminPanel, setShowAdminPanel] = useState(false);
