@@ -79,9 +79,6 @@ const App = () => {
       const typeToUse = savedType || 'sheep';
       setSelectedAnimalType(typeToUse);
       
-      const savedTypes = localStorage.getItem(`animalTypes_${userData.id}`);
-      if (savedTypes) setAnimalTypes(JSON.parse(savedTypes));
-      
       const savedAnimals = localStorage.getItem(getStorageKey(userData.id, typeToUse));
       if (savedAnimals) {
         try {
