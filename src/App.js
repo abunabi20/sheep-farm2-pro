@@ -130,33 +130,6 @@ const App = () => {
     return null;
   };
 
-  const handleLogin = (e) => {
-    e.preventDefault();
-    
-    const userFound = findUserByEmail(loginData.email);
-    
-    if (!userFound) {
-      const newUserId = `user_${Date.now()}`;
-      const updatedUsers = { ...allUsers, [newUserId]: { emails: [loginData.email.toLowerCase().trim()], password: loginData.password, role: 'user' } };
-      setAllUsers(updatedUsers);
-      const newUser = { id: newUserId, email: loginData.email.toLowerCase().trim(), name: loginData.email.split('@')[0], role: 'user' };
-      localStorage.setItem('sheepFarmUser', JSON.stringify(newUser));
-      setUser(newUser);
-      setLoginData({ email: '', password: '' });
-      return;
-    }
-
-    const userData = allUsers[userFound.userId];
-    if (loginData.password !== userData.password) {
-      alert('الباسورد غير صحيح!');
-      return;
-    }
-
-    const u = { id: userFound.userId, email: loginData.email.toLowerCase().trim(), name: userData.name || loginData.email.split('@')[0], role: userFound.role };
-    localStorage.setItem('sheepFarmUser', JSON.stringify(u));
-    setUser(u);
-    setLoginData({ email: '', password: '' });
-  };
 
 
   const handleChangePassword = (e) => {
