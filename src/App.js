@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { LogOut, Settings } from 'lucide-react';
 
 // Default admin user
@@ -37,7 +37,6 @@ const App = () => {
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login');
   const [loginData, setLoginData] = useState({ email: '', password: '' });
-  const [registerData, setRegisterData] = useState({ email: '', password: '', confirmPassword: '', name: '' });
   const [activeTab, setActiveTab] = useState('animals');
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [passwordData, setPasswordData] = useState({ old: '', new: '', confirm: '' });
@@ -619,3 +618,5 @@ const App = () => {
 };
 
 export default App;
+
+    
