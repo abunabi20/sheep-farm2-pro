@@ -1,5 +1,28 @@
-    import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { LogOut } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { LogOut, Settings } from 'lucide-react';
+
+// Default admin user
+const DEFAULT_ADMIN = {
+  'abunabi_user': {
+    emails: [
+      'abunabi@gmail.com',
+      'abunabi20@gmail.com',
+      'abunabi22@gmail.com',
+      'abunabi4@gmail.com',
+      'abunabi2000@hotmail.com'
+    ],
+    password: 'Abunabi@2024',
+    role: 'admin'
+  },
+  'majiid_user': {
+    emails: [
+      'majiid1.q8@gmail.com',
+      'majiid.q8@gmail.com'
+    ],
+    password: 'Majiid@2024',
+    role: 'admin'
+  }
+};
 
 const calculateAge = (startDate) => {
   const start = new Date(startDate);
@@ -16,6 +39,9 @@ const App = () => {
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [registerData, setRegisterData] = useState({ email: '', password: '', confirmPassword: '', name: '' });
   const [activeTab, setActiveTab] = useState('animals');
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [passwordData, setPasswordData] = useState({ old: '', new: '', confirm: '' });
+  const [passwordError, setPasswordError] = useState('');
   const [animalTypes, setAnimalTypes] = useState(['sheep', 'goat']);
   const [selectedType, setSelectedType] = useState('sheep');
   const [showModal, setShowModal] = useState(false);
@@ -24,6 +50,12 @@ const App = () => {
   const [animals, setAnimals] = useState({});
   const [showAddType, setShowAddType] = useState(false);
   const [newTypeName, setNewTypeName] = useState('');
+  const [loginError, setLoginError] = useState('');
+  
+  // Admin panel states
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [adminPanelError, setAdminPanelError] = useState('');
 
   const [animalForm, setAnimalForm] = useState({
     number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0],
@@ -32,44 +64,169 @@ const App = () => {
     slaughterLocation: '', slaughterNotes: '', deathDate: ''
   });
 
+  // Load users from localStorage
+  const [allUsers, setAllUsers] = useState(() => {
+    const saved = localStorage.getItem('allUsers');
+    return saved ? JSON.parse(saved) : DEFAULT_ADMIN;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('allUsers', JSON.stringify(allUsers));
+  }, [allUsers]);
+
   useEffect(() => {
     const saved = localStorage.getItem('sheepFarmUser');
-    if (saved) setUser(JSON.parse(saved));
-    
-    const savedTypes = localStorage.getItem('animalTypes');
-    if (savedTypes) setAnimalTypes(JSON.parse(savedTypes));
-    
-    const savedAnimals = localStorage.getItem('animals');
-    if (savedAnimals) setAnimals(JSON.parse(savedAnimals));
+    if (saved) {
+      const userData = JSON.parse(saved);
+      setUser(userData);
+      
+      const savedTypes = localStorage.getItem(`animalTypes_${userData.id}`);
+      if (savedTypes) setAnimalTypes(JSON.parse(savedTypes));
+      
+      const savedAnimals = localStorage.getItem(`animals_${userData.id}`);
+      if (savedAnimals) setAnimals(JSON.parse(savedAnimals));
+    }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('animals', JSON.stringify(animals));
-  }, [animals]);
+    if (user) {
+      localStorage.setItem(`animals_${user.id}`, JSON.stringify(animals));
+    }
+  }, [animals, user]);
+
+  // Find user ID by email
+  const findUserByEmail = (email) => {
+    const lowerEmail = email.toLowerCase().trim();
+    for (const [userId, userData] of Object.entries(allUsers)) {
+      if (userData.emails.includes(lowerEmail)) {
+        return { userId, role: userData.role };
+      }
+    }
+    return null;
+  };
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (!loginData.email || !loginData.password) return alert('ادخل البريد والباسورد');
-    const u = { id: loginData.email.replace(/[^a-z0-9]/g, ''), email: loginData.email, name: loginData.email.split('@')[0] };
+    setLoginError('');
+    
+    const userFound = findUserByEmail(loginData.email);
+    
+    if (!userFound) {
+      // New user
+      const newUserId = `user_${Date.now()}`;
+      const newUser = {
+        id: newUserId,
+        email: loginData.email.toLowerCase().trim(),
+        name: loginData.email.split('@')[0],
+        role: 'user',
+        password: loginData.password
+      };
+      
+      const updatedUsers = { ...allUsers, [newUserId]: { emails: [loginData.email.toLowerCase().trim()], password: loginData.password, role: 'user' } };
+      setAllUsers(updatedUsers);
+      localStorage.setItem('sheepFarmUser', JSON.stringify(newUser));
+      setUser(newUser);
+      setLoginData({ email: '', password: '' });
+      return;
+    }
+
+    // Check password
+    const userData = allUsers[userFound.userId];
+    if (loginData.password !== userData.password) {
+      setLoginError('الباسورد غير صحيح!');
+      return;
+    }
+
+    // Successful login
+    const u = {
+      id: userFound.userId,
+      email: loginData.email.toLowerCase().trim(),
+      name: userData.name || loginData.email.split('@')[0],
+      role: userFound.role
+    };
     localStorage.setItem('sheepFarmUser', JSON.stringify(u));
     setUser(u);
     setLoginData({ email: '', password: '' });
   };
 
-  const handleRegister = (e) => {
+  const handleChangePassword = (e) => {
     e.preventDefault();
-    if (!registerData.email || !registerData.password || !registerData.name) return alert('ملء كل الحقول');
-    if (registerData.password !== registerData.confirmPassword) return alert('الباسورد مختلف');
-    const u = { id: registerData.email.replace(/[^a-z0-9]/g, ''), email: registerData.email, name: registerData.name };
-    localStorage.setItem('sheepFarmUser', JSON.stringify(u));
-    setUser(u);
-    setRegisterData({ email: '', password: '', confirmPassword: '', name: '' });
-    setAuthMode('login');
+    setPasswordError('');
+    
+    if (!passwordData.old || !passwordData.new || !passwordData.confirm) {
+      setPasswordError('ملء جميع الحقول');
+      return;
+    }
+
+    const userData = allUsers[user.id];
+    if (passwordData.old !== userData.password) {
+      setPasswordError('الباسورد القديم غير صحيح!');
+      return;
+    }
+
+    if (passwordData.new !== passwordData.confirm) {
+      setPasswordError('كلمات المرور الجديدة غير متطابقة!');
+      return;
+    }
+
+    if (passwordData.new.length < 6) {
+      setPasswordError('الباسورد الجديد قصير جداً (6 أحرف على الأقل)');
+      return;
+    }
+
+    const updatedUsers = { ...allUsers };
+    updatedUsers[user.id].password = passwordData.new;
+    setAllUsers(updatedUsers);
+    
+    setPasswordData({ old: '', new: '', confirm: '' });
+    setShowChangePassword(false);
+    alert('تم تغيير كلمة المرور بنجاح!');
+  };
+
+  const handleAddAdmin = (e) => {
+    e.preventDefault();
+    setAdminPanelError('');
+
+    if (!newAdminEmail) {
+      setAdminPanelError('أدخل البريد الإلكتروني');
+      return;
+    }
+
+    const emailLower = newAdminEmail.toLowerCase().trim();
+    
+    // Check if email already exists
+    for (const userData of Object.values(allUsers)) {
+      if (userData.emails.includes(emailLower)) {
+        setAdminPanelError('هذا البريد مسجل بالفعل!');
+        return;
+      }
+    }
+
+    // Add new admin
+    const newAdminId = `admin_${Date.now()}`;
+    const defaultPassword = 'Admin@2024';
+    
+    const updatedUsers = { ...allUsers };
+    updatedUsers[newAdminId] = {
+      emails: [emailLower],
+      password: defaultPassword,
+      role: 'admin',
+      name: emailLower.split('@')[0]
+    };
+    
+    setAllUsers(updatedUsers);
+    setAdminPanelError(`✓ تم إضافة المشرف بنجاح!\nالبريد: ${emailLower}\nالباسورد المؤقت: ${defaultPassword}`);
+    setNewAdminEmail('');
+    
+    setTimeout(() => setAdminPanelError(''), 3000);
   };
 
   const handleLogout = () => {
     localStorage.removeItem('sheepFarmUser');
     setUser(null);
+    setAuthMode('login');
+    setShowChangePassword(false);
+    setShowAdminPanel(false);
   };
 
   const handleAnimalChange = useCallback((f, v) => setAnimalForm(p => ({ ...p, [f]: v })), []);
@@ -93,7 +250,7 @@ const App = () => {
     if (animalTypes.includes(newTypeName)) return alert('النوع موجود بالفعل');
     const updated = [...animalTypes, newTypeName];
     setAnimalTypes(updated);
-    localStorage.setItem('animalTypes', JSON.stringify(updated));
+    if (user) localStorage.setItem(`animalTypes_${user.id}`, JSON.stringify(updated));
     setNewTypeName('');
     setShowAddType(false);
     setSelectedType(newTypeName);
@@ -137,9 +294,20 @@ const App = () => {
 
   const typeCount = useMemo(() => {
     const typeAnimals = animals[selectedType] || {};
-    const active = Object.values(typeAnimals).filter(a => a.status === 'active').length;
-    const productive = Object.values(typeAnimals).filter(a => a.status === 'productive').length;
-    return { total: Object.keys(typeAnimals).length, active, productive };
+    const total = Object.keys(typeAnimals).length;
+    
+    const counts = {
+      total: total,
+      active: Object.values(typeAnimals).filter(a => a.status === 'active').length,
+      productive: Object.values(typeAnimals).filter(a => a.status === 'productive').length,
+      sick: Object.values(typeAnimals).filter(a => a.healthStatus === 'sick').length,
+      dead: Object.values(typeAnimals).filter(a => a.status === 'dead').length,
+      sold: Object.values(typeAnimals).filter(a => a.status === 'sold').length,
+      charity: Object.values(typeAnimals).filter(a => a.slaughterType === 'charity').length,
+      freezer: Object.values(typeAnimals).filter(a => a.slaughterLocation === 'freezer').length,
+    };
+    
+    return counts;
   }, [animals, selectedType]);
 
   if (!user) {
@@ -150,20 +318,19 @@ const App = () => {
           {authMode === 'login' ? (
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>دخول</h2>
-              <input type="email" placeholder="البريد" value={loginData.email} onChange={(e) => setLoginData(p => ({ ...p, email: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+              {loginError && <div style={{ color: '#e74c3c', background: '#ffe8e8', padding: '10px', borderRadius: '6px', fontSize: '12px' }}>{loginError}</div>}
+              <input type="email" placeholder="البريد الإلكتروني" value={loginData.email} onChange={(e) => setLoginData(p => ({ ...p, email: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
               <input type="password" placeholder="الباسورد" value={loginData.password} onChange={(e) => setLoginData(p => ({ ...p, password: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-              <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>دخول</button>
-              <button type="button" onClick={() => setAuthMode('register')} style={{ background: 'none', border: 'none', color: '#8B6F47', cursor: 'pointer' }}>تسجيل جديد</button>
+              <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button>
+              <p style={{ color: '#666', fontSize: '12px', textAlign: 'center' }}>لا تملك حساب؟ ادخل بريدك الجديد للتسجيل التلقائي</p>
             </form>
           ) : (
-            <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>تسجيل</h2>
-              <input type="text" placeholder="الاسم" value={registerData.name} onChange={(e) => setRegisterData(p => ({ ...p, name: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-              <input type="email" placeholder="البريد" value={registerData.email} onChange={(e) => setRegisterData(p => ({ ...p, email: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-              <input type="password" placeholder="الباسورد" value={registerData.password} onChange={(e) => setRegisterData(p => ({ ...p, password: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-              <input type="password" placeholder="تأكيد الباسورد" value={registerData.confirmPassword} onChange={(e) => setRegisterData(p => ({ ...p, confirmPassword: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-              <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>تسجيل</button>
-              <button type="button" onClick={() => setAuthMode('login')} style={{ background: 'none', border: 'none', color: '#8B6F47', cursor: 'pointer' }}>دخول</button>
+            <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>دخول جديد</h2>
+              {loginError && <div style={{ color: '#e74c3c', background: '#ffe8e8', padding: '10px', borderRadius: '6px', fontSize: '12px' }}>{loginError}</div>}
+              <input type="email" placeholder="البريد الإلكتروني" value={loginData.email} onChange={(e) => setLoginData(p => ({ ...p, email: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+              <input type="password" placeholder="الباسورد" value={loginData.password} onChange={(e) => setLoginData(p => ({ ...p, password: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+              <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button>
             </form>
           )}
         </div>
@@ -176,8 +343,11 @@ const App = () => {
       <style>{`* { margin: 0; padding: 0; box-sizing: border-box; } html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }`}</style>
       <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', height: '100vh', overflowY: 'auto' }}>
         <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>
-        <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '20px' }}>مرحباً {user.name}</p>
-        <ul style={{ listStyle: 'none', marginBottom: '30px' }}>
+        <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '5px' }}>مرحباً {user.name}</p>
+        <p style={{ color: '#F5D547', fontSize: '11px', textAlign: 'center', marginBottom: '20px', background: user.role === 'admin' ? '#8B6F47' : 'transparent', padding: '5px', borderRadius: '4px' }}>
+          {user.role === 'admin' ? '👑 مشرف' : '👤 مستخدم'}
+        </p>
+        <ul style={{ listStyle: 'none', marginBottom: '20px' }}>
           {[{ id: 'animals', label: '🐑 الحيوانات' }].map(item => (
             <li key={item.id} style={{ marginBottom: '8px' }}>
               <button onClick={() => setActiveTab(item.id)} style={{ width: '100%', padding: '12px 15px', color: activeTab === item.id ? '#3D2817' : '#E8D5C4', background: activeTab === item.id ? 'linear-gradient(90deg, #F5D547, #D4A574)' : 'transparent', border: 'none', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: activeTab === item.id ? 'bold' : 'normal' }}>
@@ -186,9 +356,22 @@ const App = () => {
             </li>
           ))}
         </ul>
-        <button onClick={handleLogout} style={{ width: '100%', padding: '12px 15px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-          <LogOut size={16} /> تسجيل الخروج
-        </button>
+        
+        <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
+          <button onClick={() => setShowChangePassword(true)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>
+            🔐 تغيير كلمة المرور
+          </button>
+          
+          {user.role === 'admin' && (
+            <button onClick={() => setShowAdminPanel(true)} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+              <Settings size={14} /> إدارة المستخدمين
+            </button>
+          )}
+          
+          <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+            <LogOut size={14} /> تسجيل الخروج
+          </button>
+        </div>
       </div>
       <div style={{ overflowY: 'auto', maxHeight: '100vh', width: '100%', background: '#f9f7f4', padding: '30px' }}>
         {activeTab === 'animals' && (
@@ -244,8 +427,15 @@ const App = () => {
               </div>
             )}
 
-            <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold', color: '#3D2817' }}>
-              الإجمالي: {typeCount.total} | النشطة: {typeCount.active} | المنتجة: {typeCount.productive}
+            <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold', color: '#3D2817', fontSize: '13px', lineHeight: '1.8' }}>
+              <div>🐑 الإجمالي: {typeCount.total}</div>
+              <div style={{ color: '#27ae60' }}>✓ النشطة: {typeCount.active}</div>
+              <div style={{ color: '#f39c12' }}>⭐ المنتجة: {typeCount.productive}</div>
+              <div style={{ color: '#e74c3c' }}>⚠️ المريضة: {typeCount.sick}</div>
+              <div style={{ color: '#7f8c8d' }}>☠️ المتوفاة: {typeCount.dead}</div>
+              <div style={{ color: '#3498db' }}>💰 المباع: {typeCount.sold}</div>
+              <div style={{ color: '#e67e22' }}>🤲 الصدقة: {typeCount.charity}</div>
+              <div style={{ color: '#2980b9' }}>❄️ الثلاجة: {typeCount.freezer}</div>
             </div>
 
             <button
@@ -357,10 +547,75 @@ const App = () => {
           </div>
         </div>
       )}
+
+      {showChangePassword && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }} onClick={() => setShowChangePassword(false)}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '400px', width: '90%', position: 'relative' }} onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowChangePassword(false)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer' }}>✕</button>
+            
+            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>🔐 تغيير كلمة المرور</h2>
+            
+            {passwordError && <div style={{ color: passwordError.includes('✓') ? '#27ae60' : '#e74c3c', background: passwordError.includes('✓') ? '#e8f8f5' : '#ffe8e8', padding: '10px', borderRadius: '6px', fontSize: '12px', marginBottom: '15px', whiteSpace: 'pre-line' }}>{passwordError}</div>}
+            
+            <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>كلمة المرور القديمة</label>
+                <input type="password" value={passwordData.old} onChange={(e) => setPasswordData(p => ({ ...p, old: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+              </div>
+              
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>كلمة المرور الجديدة</label>
+                <input type="password" value={passwordData.new} onChange={(e) => setPasswordData(p => ({ ...p, new: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+              </div>
+              
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>تأكيد كلمة المرور</label>
+                <input type="password" value={passwordData.confirm} onChange={(e) => setPasswordData(p => ({ ...p, confirm: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+              </div>
+              
+              <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>تحديث كلمة المرور</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showAdminPanel && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }} onClick={() => setShowAdminPanel(false)}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '500px', width: '90%', position: 'relative', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowAdminPanel(false)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer' }}>✕</button>
+            
+            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>👑 إدارة المستخدمين والمشرفين</h2>
+            
+            {adminPanelError && <div style={{ color: adminPanelError.includes('✓') ? '#27ae60' : '#e74c3c', background: adminPanelError.includes('✓') ? '#e8f8f5' : '#ffe8e8', padding: '10px', borderRadius: '6px', fontSize: '12px', marginBottom: '15px', whiteSpace: 'pre-line' }}>{adminPanelError}</div>}
+            
+            <form onSubmit={handleAddAdmin} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+              <h3 style={{ color: '#3D2817', fontSize: '14px' }}>➕ إضافة مشرف جديد</h3>
+              <input type="email" placeholder="البريد الإلكتروني" value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+              <button type="submit" style={{ background: '#27ae60', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إضافة</button>
+            </form>
+
+            <div style={{ borderTop: '1px solid #ddd', paddingTop: '20px' }}>
+              <h3 style={{ color: '#3D2817', fontSize: '14px', marginBottom: '15px' }}>📋 قائمة المشرفين والمستخدمين</h3>
+              <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                {Object.entries(allUsers).map(([userId, userData]) => (
+                  <div key={userId} style={{ background: '#f9f7f4', padding: '10px', borderRadius: '6px', marginBottom: '10px', fontSize: '12px' }}>
+                    <div style={{ fontWeight: 'bold', color: userData.role === 'admin' ? '#27ae60' : '#8B6F47' }}>
+                      {userData.role === 'admin' ? '👑' : '👤'} {userData.name || userData.emails[0].split('@')[0]}
+                    </div>
+                    <div style={{ color: '#666', fontSize: '11px' }}>
+                      {userData.emails.map((email, idx) => (
+                        <div key={idx}>{email}</div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default App;
-
-    
