@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { LogOut, Settings } from 'lucide-react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 // Firebase fallback with localStorage sync
 const getStorageKey = (userId, type) => `farm_${userId}_${type}`;
@@ -52,7 +51,6 @@ const App = () => {
   const [newTypeName, setNewTypeName] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
-  const [hasChanges, setHasChanges] = useState(false);
   
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -103,7 +101,6 @@ const App = () => {
   useEffect(() => {
     if (user && selectedAnimalType && Object.keys(animals).length > 0) {
       localStorage.setItem(getStorageKey(user.id, selectedAnimalType), JSON.stringify(animals));
-      setHasChanges(false);
     }
   }, [animals, user, selectedAnimalType]);
 
@@ -241,7 +238,6 @@ const App = () => {
 
   const handleAnimalChange = useCallback((f, v) => {
     setAnimalForm(p => ({ ...p, [f]: v }));
-    setHasChanges(true);
   }, []);
 
   const handleAddAnimal = () => {
@@ -754,3 +750,5 @@ const App = () => {
 };
 
 export default App;
+
+    
