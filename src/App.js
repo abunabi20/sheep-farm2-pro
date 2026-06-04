@@ -35,7 +35,12 @@ const formatAge = (startDate) => {
 };
 
 const App = () => {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('sheepFarmUser');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [selectedAnimalType, setSelectedAnimalType] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [passwordData, setPasswordData] = useState({ old: '', new: '', confirm: '' });
@@ -296,6 +301,49 @@ const App = () => {
 
   // شاشة اختيار النوع
   // الصفحة الرئيسية
+  
+  if (!user) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
+        <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '500px', width: '90%', textAlign: 'center' }}>
+          <h1 style={{ color: '#3D2817', marginBottom: '30px', fontSize: '32px' }}>🐑 FarmHub</h1>
+          <p style={{ color: '#666', marginBottom: '30px', fontSize: '14px' }}>تطبيق إدارة الثروة الحيوانية</p>
+          
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const userFound = Object.entries(DEFAULT_ADMIN).find(([_, u]) => u.emails?.includes(loginEmail.toLowerCase().trim()));
+            
+            if (userFound && userFound[1].password === loginPassword) {
+              const userData = { id: userFound[0], email: loginEmail, name: userFound[1].name || loginEmail.split('@')[0], role: userFound[1].role };
+              localStorage.setItem('sheepFarmUser', JSON.stringify(userData));
+              setUser(userData);
+            } else {
+              alert('البريد أو الباسورد غير صحيح');
+            }
+          }} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <input 
+              type="email" 
+              placeholder="البريد الإلكتروني" 
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px' }} 
+              required
+            />
+            <input 
+              type="password" 
+              placeholder="الباسورد" 
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px' }} 
+              required
+            />
+            <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+  
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh', background: '#f9f7f4' }}>
       <style>{`* { margin: 0; padding: 0; box-sizing: border-box; } html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }`}</style>
