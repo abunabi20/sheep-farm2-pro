@@ -144,19 +144,21 @@ const App = () => {
   };
 
   const handleSelectAnimalType = (type) => {
+    // حمّل البيانات أولاً ثم غيّر النوع
+    const savedAnimals = localStorage.getItem(getStorageKey(user.id, type));
+    if (savedAnimals) {
+      try {
+        setAnimals(JSON.parse(savedAnimals));
+      } catch (e) {
+        setAnimals({ [type]: {} });
+      }
+    } else {
+      setAnimals({ [type]: {} });
+    }
+    
     setSelectedAnimalType(type);
     if (user) {
       localStorage.setItem(`selectedType_${user.id}`, type);
-      const savedAnimals = localStorage.getItem(getStorageKey(user.id, type));
-      if (savedAnimals) {
-        try {
-          setAnimals(JSON.parse(savedAnimals));
-        } catch (e) {
-          setAnimals({ [type]: {} });
-        }
-      } else {
-        setAnimals({ [type]: {} });
-      }
     }
   };
 
