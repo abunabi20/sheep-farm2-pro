@@ -1,4 +1,4 @@
-    import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 // Firebase fallback with localStorage sync
 const getStorageKey = (userId, type) => `farm_${userId}_${type}`;
@@ -35,23 +35,23 @@ const formatAge = (startDate) => {
 };
 
 const App = () => {
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('sheepFarmUser');
-    return saved ? JSON.parse(saved) : null;
-  });
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
+  const [user, setUser] = useState(null);
   const [selectedAnimalType, setSelectedAnimalType] = useState(null);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [passwordData, setPasswordData] = useState({ old: '', new: '', confirm: '' });
   const [passwordError, setPasswordError] = useState('');
+  const [animalTypes, setAnimalTypes] = useState(['sheep', 'goat']);
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedAnimal, setSelectedAnimal] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [animals, setAnimals] = useState({});
+  const [showAddType, setShowAddType] = useState(false);
+  const [newTypeName, setNewTypeName] = useState('');
+  const [loginError, setLoginError] = useState('');
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
-  const [filterType, setFilterType] = useState('all'); // Filter for viewing
   
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -83,6 +83,9 @@ const App = () => {
       const savedType = localStorage.getItem(`selectedType_${userData.id}`);
       const typeToUse = savedType || 'sheep';
       setSelectedAnimalType(typeToUse);
+      
+      const savedTypes = localStorage.getItem(`animalTypes_${userData.id}`);
+      if (savedTypes) setAnimalTypes(JSON.parse(savedTypes));
       
       const savedAnimals = localStorage.getItem(getStorageKey(userData.id, typeToUse));
       if (savedAnimals) {
@@ -120,8 +123,71 @@ const App = () => {
     }
   }, [user, selectedAnimalType]);
 
+  const findUserByEmail = (email) => {
+    const lowerEmail = email.toLowerCase().trim();
+    for (const [userId, userData] of Object.entries(allUsers)) {
+      if (userData.emails.includes(lowerEmail)) {
+        return { userId, role: userData.role };
+      }
+    }
+    return null;
+  };
 
+  const handleLogin = (e) => {
+    e.preventDefault();
+    setLoginError('');
+    
+    const userFound = findUserByEmail(loginData.email);
+    
+    if (!userFound) {
+      const newUserId = `user_${Date.now()}`;
+      const updatedUsers = { ...allUsers, [newUserId]: { emails: [loginData.email.toLowerCase().trim()], password: loginData.password, role: 'user' } };
+      setAllUsers(updatedUsers);
+      const newUser = { id: newUserId, email: loginData.email.toLowerCase().trim(), name: loginData.email.split('@')[0], role: 'user' };
+      localStorage.setItem('sheepFarmUser', JSON.stringify(newUser));
+      setUser(newUser);
+      setLoginData({ email: '', password: '' });
+      return;
+    }
 
+    const userData = allUsers[userFound.userId];
+    if (loginData.password !== userData.password) {
+      setLoginError('الباسورد غير صحيح!');
+      return;
+    }
+
+    const u = { id: userFound.userId, email: loginData.email.toLowerCase().trim(), name: userData.name || loginData.email.split('@')[0], role: userFound.role };
+    localStorage.setItem('sheepFarmUser', JSON.stringify(u));
+    setUser(u);
+    setLoginData({ email: '', password: '' });
+  };
+
+  const handleSelectAnimalType = (type) => {
+    try {
+      // حمّل البيانات أولاً ثم غيّر النوع
+      const savedAnimals = localStorage.getItem(getStorageKey(user.id, type));
+      if (savedAnimals) {
+        try {
+          const parsed = JSON.parse(savedAnimals);
+          setAnimals(prev => ({ ...prev, [type]: parsed }));
+        } catch (e) {
+          console.error('Parse error:', e);
+          setAnimals(prev => ({ ...prev, [type]: {} }));
+        }
+      } else {
+        setAnimals(prev => ({ ...prev, [type]: {} }));
+      }
+      
+      setSelectedAnimalType(type);
+      if (user) {
+        localStorage.setItem(`selectedType_${user.id}`, type);
+      }
+    } catch (error) {
+      console.error('Error loading animal type:', error);
+      setAnimals(prev => ({ ...prev, [type]: {} }));
+      setSelectedAnimalType(type);
+    }
+  };
 
   const handleChangePassword = (e) => {
     e.preventDefault();
@@ -219,6 +285,35 @@ const App = () => {
     alert('✓ تم الحفظ بنجاح!');
   };
 
+  const handleAddType = () => {
+    if (!newTypeName) return alert('أدخل اسم النوع');
+    if (animalTypes.includes(newTypeName)) return alert('النوع موجود بالفعل');
+    
+    const updated = [...animalTypes, newTypeName];
+    setAnimalTypes(updated);
+    if (user) localStorage.setItem(`animalTypes_${user.id}`, JSON.stringify(updated));
+    
+    // إضافة النوع الجديد مع الحفاظ على البيانات السابقة
+    setAnimals(prev => {
+      const newAnimals = { ...prev };
+      newAnimals[newTypeName] = {};
+      
+      // حفظ في localStorage
+      if (user) {
+        localStorage.setItem(getStorageKey(user.id, newTypeName), JSON.stringify(newAnimals[newTypeName]));
+      }
+      return newAnimals;
+    });
+    
+    // الانتقال للنوع الجديد
+    setTimeout(() => {
+      setSelectedAnimalType(newTypeName);
+      if (user) localStorage.setItem(`selectedType_${user.id}`, newTypeName);
+    }, 100);
+    
+    setNewTypeName('');
+    setShowAddType(false);
+  };
 
   const handleDeleteAnimal = (id) => {
     if (!window.confirm('هل تريد حذف هذا الحيوان؟')) return;
@@ -249,9 +344,95 @@ const App = () => {
   };
 
   const sortedAnimals = useMemo(() => {
-    let allAnimals = [];
+    if (!selectedAnimalType || !animals[selectedAnimalType]) return [];
+    const typeAnimals = animals[selectedAnimalType] || {};
+    return Object.entries(typeAnimals)
+      .map(([id, data]) => ({ id, ...data }))
+      .sort((a, b) => parseInt(a.number) - parseInt(b.number));
+  }, [animals, selectedAnimalType]);
+
+  const typeCount = useMemo(() => {
+    if (!selectedAnimalType || !animals[selectedAnimalType]) {
+      return {
+        total: 0, active: 0, productive: 0, sick: 0,
+        dead: 0, sold: 0, charity: 0, freezer: 0,
+      };
+    }
+    const typeAnimals = animals[selectedAnimalType] || {};
+    const total = Object.keys(typeAnimals).length;
     
-    // جمع جميع الحيوانات من جميع الأنواع
+    return {
+      total,
+      active: Object.values(typeAnimals).filter(a => a.status === 'active').length,
+      productive: Object.values(typeAnimals).filter(a => a.status === 'productive').length,
+      sick: Object.values(typeAnimals).filter(a => a.healthStatus === 'sick').length,
+      dead: Object.values(typeAnimals).filter(a => a.status === 'dead').length,
+      sold: Object.values(typeAnimals).filter(a => a.status === 'sold').length,
+      charity: Object.values(typeAnimals).filter(a => a.slaughterType === 'charity').length,
+      freezer: Object.values(typeAnimals).filter(a => a.slaughterLocation === 'freezer').length,
+    };
+  }, [animals, selectedAnimalType]);
+
+  // شاشة اختيار النوع
+  if (user && !selectedAnimalType) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
+        <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '600px', width: '90%', textAlign: 'center' }}>
+          <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🐑 اختر نوع الحيوان</h1>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: animalTypes.length > 2 ? '1fr 1fr' : '1fr', gap: '15px', marginBottom: '30px' }}>
+            {animalTypes.map(type => (
+              <button
+                key={type}
+                onClick={() => handleSelectAnimalType(type)}
+                style={{
+                  padding: '30px 20px',
+                  background: getTypeColor(type),
+                  border: `3px solid ${getTypeTextColor(type)}`,
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  color: getTypeTextColor(type),
+                }}
+              >
+                {type === 'sheep' ? '🐑 ضان' : type === 'goat' ? '🐐 ماعز' : `🐄 ${type}`}
+              </button>
+            ))}
+          </div>
+
+          <button onClick={() => setShowAddType(true)} style={{ width: '100%', padding: '15px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '10px', fontSize: '14px' }}>
+            ➕ إضافة نوع جديد
+          </button>
+
+          {showAddType && (
+            <div style={{ background: '#f9f7f4', padding: '20px', borderRadius: '8px', marginBottom: '15px' }}>
+              <input 
+                type="text" 
+                placeholder="مثال: بقر، طيور، إبل، خيل..." 
+                value={newTypeName} 
+                onChange={(e) => setNewTypeName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleAddType()}
+                style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', marginBottom: '10px', fontSize: '14px' }} 
+              />
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={handleAddType} style={{ flex: 1, background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إضافة</button>
+                <button onClick={() => { setShowAddType(false); setNewTypeName(''); }} style={{ flex: 1, background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+              </div>
+            </div>
+          )}
+
+          <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>
+            تسجيل الخروج
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // صفحة Dashboard
+  if (showDashboard) {
+    let allAnimals = [];
     Object.entries(animals).forEach(([type, typeAnimals]) => {
       if (typeAnimals && typeof typeAnimals === 'object') {
         Object.entries(typeAnimals).forEach(([id, data]) => {
@@ -259,91 +440,118 @@ const App = () => {
         });
       }
     });
-    
-    // تصفية حسب النوع المختار
-    if (filterType !== 'all') {
-      allAnimals = allAnimals.filter(a => a.type === filterType);
-    }
-    
-    // ترتيب حسب الرقم
-    return allAnimals.sort((a, b) => parseInt(a.number) - parseInt(b.number));
-  }, [animals, filterType]);
 
-  const typeCount = useMemo(() => {
-    let allAnimals = [];
-    
-    // جمع جميع الحيوانات
-    Object.entries(animals).forEach(([type, typeAnimals]) => {
-      if (typeAnimals && typeof typeAnimals === 'object') {
-        Object.entries(typeAnimals).forEach(([id, data]) => {
-          allAnimals.push({ ...data });
-        });
-      }
-    });
-    
-    const total = allAnimals.length;
-    const active = allAnimals.filter(a => a.status === 'active').length;
-    const sick = allAnimals.filter(a => a.healthStatus === 'sick').length;
-    const sold = allAnimals.filter(a => a.status === 'sold').length;
-    const freezer = allAnimals.filter(a => a.status === 'freezer').length;
-    
-    return {
-      total,
-      active,
-      productive: 0,
-      sick,
-      dead: 0,
-      sold,
-      charity: 0,
-      freezer,
+    const totalStats = {
+      total: allAnimals.length,
+      active: allAnimals.filter(a => a.status === 'active').length,
+      sick: allAnimals.filter(a => a.healthStatus === 'sick').length,
+      sold: allAnimals.filter(a => a.status === 'sold').length,
+      freezer: allAnimals.filter(a => a.status === 'freezer').length,
     };
-  }, [animals]);
 
-  // شاشة اختيار النوع
-  // الصفحة الرئيسية
-  
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh', background: '#f9f7f4' }}>
+        <style>{`* { margin: 0; padding: 0; box-sizing: border-box; } html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }`}</style>
+        
+        {/* Sidebar */}
+        <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', height: '100vh', overflowY: 'auto', position: 'fixed', width: '260px', left: 0, top: 0, zIndex: 100 }}>
+          <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>
+          <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '5px' }}>مرحباً {user.name}</p>
+          <p style={{ color: '#F5D547', fontSize: '11px', textAlign: 'center', marginBottom: '10px', background: user.role === 'admin' ? '#8B6F47' : 'transparent', padding: '5px', borderRadius: '4px' }}>
+            {user.role === 'admin' ? '👑 مشرف' : '👤 مستخدم'}
+          </p>
+          
+          <button onClick={() => setShowDashboard(false)} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>
+            ← رجوع
+          </button>
+
+          <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
+            <button onClick={() => setShowChangePassword(true)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>
+              🔐 تغيير المرور
+            </button>
+            
+            <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>
+              تسجيل الخروج
+            </button>
+          </div>
+        </div>
+
+        {/* المحتوى */}
+        <div style={{ marginLeft: '260px', padding: '30px', overflowY: 'auto', maxHeight: '100vh' }}>
+          <h1 style={{ marginBottom: '20px', color: '#3D2817' }}>📊 ملخص الإحصائيات الشاملة</h1>
+
+          {/* الإحصائيات العامة */}
+          <div style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '30px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
+            <div style={{ textAlign: 'center', padding: '15px', background: '#f9f7f4', borderRadius: '8px' }}>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#3D2817' }}>{totalStats.total}</div>
+              <div style={{ color: '#666', fontSize: '13px', marginTop: '5px' }}>🐑 الإجمالي</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '15px', background: '#f9f7f4', borderRadius: '8px' }}>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#27ae60' }}>{totalStats.active}</div>
+              <div style={{ color: '#27ae60', fontSize: '13px', marginTop: '5px' }}>✓ النشطة</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '15px', background: '#f9f7f4', borderRadius: '8px' }}>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#e74c3c' }}>{totalStats.sick}</div>
+              <div style={{ color: '#e74c3c', fontSize: '13px', marginTop: '5px' }}>⚠️ المريضة</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '15px', background: '#f9f7f4', borderRadius: '8px' }}>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#3498db' }}>{totalStats.sold}</div>
+              <div style={{ color: '#3498db', fontSize: '13px', marginTop: '5px' }}>💰 المباع</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '15px', background: '#f9f7f4', borderRadius: '8px' }}>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#2980b9' }}>{totalStats.freezer}</div>
+              <div style={{ color: '#2980b9', fontSize: '13px', marginTop: '5px' }}>❄️ الثلاجة</div>
+            </div>
+          </div>
+
+          {/* إحصائيات حسب النوع */}
+          <h2 style={{ marginBottom: '15px', color: '#3D2817' }}>📈 توزيع الحيوانات حسب النوع</h2>
+          <div style={{ background: 'white', padding: '20px', borderRadius: '8px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '15px' }}>
+            {Object.keys(animals).map(type => {
+              const typeAnimals = animals[type] || {};
+              const typeCount = Object.keys(typeAnimals).length;
+              const typeActive = Object.values(typeAnimals).filter(a => a.status === 'active').length;
+              const typeSick = Object.values(typeAnimals).filter(a => a.healthStatus === 'sick').length;
+
+              return (
+                <div key={type} style={{ background: '#f9f7f4', padding: '15px', borderRadius: '8px', border: '2px solid #ddd' }}>
+                  <h3 style={{ color: '#3D2817', marginBottom: '10px' }}>
+                    {type === 'sheep' ? '🐑 الضان' : type === 'goat' ? '🐐 الماعز' : `🐄 ${type}`}
+                  </h3>
+                  <div style={{ fontSize: '13px', lineHeight: '1.8', color: '#555' }}>
+                    <div>📊 الإجمالي: <span style={{ fontWeight: 'bold', color: '#3D2817' }}>{typeCount}</span></div>
+                    <div>✓ النشطة: <span style={{ fontWeight: 'bold', color: '#27ae60' }}>{typeActive}</span></div>
+                    <div>⚠️ المريضة: <span style={{ fontWeight: 'bold', color: '#e74c3c' }}>{typeSick}</span></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // شاشة الدخول
   if (!user) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
-        <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '500px', width: '90%', textAlign: 'center' }}>
-          <h1 style={{ color: '#3D2817', marginBottom: '30px', fontSize: '32px' }}>🐑 FarmHub</h1>
-          <p style={{ color: '#666', marginBottom: '30px', fontSize: '14px' }}>تطبيق إدارة الثروة الحيوانية</p>
-          
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const userFound = Object.entries(DEFAULT_ADMIN).find(([_, u]) => u.emails?.includes(loginEmail.toLowerCase().trim()));
-            
-            if (userFound && userFound[1].password === loginPassword) {
-              const userData = { id: userFound[0], email: loginEmail, name: userFound[1].name || loginEmail.split('@')[0], role: userFound[1].role };
-              localStorage.setItem('sheepFarmUser', JSON.stringify(userData));
-              setUser(userData);
-            } else {
-              alert('البريد أو الباسورد غير صحيح');
-            }
-          }} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <input 
-              type="email" 
-              placeholder="البريد الإلكتروني" 
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px' }} 
-              required
-            />
-            <input 
-              type="password" 
-              placeholder="الباسورد" 
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
-              style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px' }} 
-              required
-            />
+        <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '500px', width: '90%' }}>
+          <h1 style={{ color: '#3D2817', textAlign: 'center', marginBottom: '30px' }}>🐑 FarmHub Pro</h1>
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>دخول</h2>
+            {loginError && <div style={{ color: '#e74c3c', background: '#ffe8e8', padding: '10px', borderRadius: '6px', fontSize: '13px' }}>{loginError}</div>}
+            <input type="email" placeholder="البريد الإلكتروني" value={loginData.email} onChange={(e) => setLoginData(p => ({ ...p, email: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
+            <input type="password" placeholder="الباسورد" value={loginData.password} onChange={(e) => setLoginData(p => ({ ...p, password: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
             <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button>
+            <p style={{ color: '#666', fontSize: '12px', textAlign: 'center' }}>لا تملك حساب؟ ادخل بريدك الجديد للتسجيل التلقائي</p>
           </form>
         </div>
       </div>
     );
   }
-  
+
+  // الصفحة الرئيسية
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh', background: '#f9f7f4' }}>
       <style>{`* { margin: 0; padding: 0; box-sizing: border-box; } html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }`}</style>
@@ -356,8 +564,16 @@ const App = () => {
           {user.role === 'admin' ? '👑 مشرف' : '👤 مستخدم'}
         </p>
         <p style={{ color: '#E8D5C4', fontSize: '11px', textAlign: 'center', marginBottom: '20px', background: '#5D4E37', padding: '8px', borderRadius: '4px', fontWeight: 'bold' }}>
-          جميع الحيوانات 🐄
+          {selectedAnimalType === 'sheep' ? '🐑 الضان' : selectedAnimalType === 'goat' ? '🐐 الماعز' : selectedAnimalType}
         </p>
+        
+        <button onClick={() => setShowDashboard(true)} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>
+          📊 ملخص الإحصائيات
+        </button>
+
+        <button onClick={() => setSelectedAnimalType(null)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>
+          ↩️ تغيير النوع
+        </button>
 
         <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
           <button onClick={() => setShowChangePassword(true)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>
@@ -379,21 +595,9 @@ const App = () => {
       {/* المحتوى الرئيسي */}
       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, marginLeft: '260px', overflowY: 'auto', background: '#f9f7f4', padding: '30px', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h1 style={{ color: '#3D2817', margin: 0 }}>🐄 إدارة جميع الحيوانات</h1>
-            <select 
-              value={filterType} 
-              onChange={(e) => setFilterType(e.target.value)}
-              style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: '6px', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', color: '#3D2817' }}
-            >
-              <option value="all">📊 الكل</option>
-              {Object.keys(animals).map(type => (
-                <option key={type} value={type}>
-                  {type === 'sheep' ? '🐑 الضان' : type === 'goat' ? '🐐 الماعز' : `🐄 ${type}`}
-                </option>
-              ))}
-            </select>
-          </div>
+          <h1 style={{ marginBottom: '20px', color: '#3D2817' }}>
+            {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
+          </h1>
 
           {/* الإحصائيات */}
           <div style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold', color: '#3D2817', fontSize: '14px', lineHeight: '2' }}>
@@ -416,7 +620,6 @@ const App = () => {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
                 <tr style={{ background: '#f0f0f0', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>النوع</th>
                   <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الرقم</th>
                   <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الجنس</th>
                   <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>العمر</th>
@@ -428,16 +631,13 @@ const App = () => {
               </thead>
               <tbody>
                 {sortedAnimals.map(animal => {
-                  const statusColor = getTypeColor(animal.type);
+                  const statusColor = getTypeColor(selectedAnimalType);
                   const notes = animal.healthNotes || animal.notes || '-';
                   const notesShort = notes.length > 20 ? notes.substring(0, 20) + '...' : notes;
                   
                   return (
                     <tr key={animal.id} style={{ borderBottom: '1px solid #eee', background: statusColor }}>
-                      <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(animal.type) }}>
-                        {animal.type === 'sheep' ? '🐑 الضان' : animal.type === 'goat' ? '🐐 الماعز' : `🐄 ${animal.type}`}
-                      </td>
-                      <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(animal.type) }}>{animal.number}</td>
+                      <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(selectedAnimalType) }}>{animal.number}</td>
                       <td style={{ padding: '10px' }}>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</td>
                       <td style={{ padding: '10px' }}>{formatAge(animal.birthDate)}</td>
                       <td style={{ padding: '10px', color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
@@ -714,5 +914,3 @@ const App = () => {
 };
 
 export default App;
-
-    
