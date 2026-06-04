@@ -486,74 +486,76 @@ const App = () => {
       </div>
 
       {/* المحتوى الرئيسي */}
-      <div style={{ marginLeft: '260px', overflowY: 'auto', maxHeight: '100vh', width: 'calc(100% - 260px)', background: '#f9f7f4', padding: '30px' }}>
-        <h1 style={{ marginBottom: '20px' }}>
-          {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
-        </h1>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, marginLeft: '260px', overflowY: 'auto', background: '#f9f7f4', padding: '30px', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1 }}>
+          <h1 style={{ marginBottom: '20px', color: '#3D2817' }}>
+            {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
+          </h1>
 
-        {/* الإحصائيات */}
-        <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold', color: '#3D2817', fontSize: '13px', lineHeight: '1.8' }}>
-          <div>🐑 الإجمالي: {typeCount.total}</div>
-          <div style={{ color: '#27ae60' }}>✓ النشطة: {typeCount.active}</div>
-          <div style={{ color: '#e74c3c' }}>⚠️ المريضة: {typeCount.sick}</div>
-          <div style={{ color: '#3498db' }}>💰 المباع: {typeCount.sold}</div>
-          <div style={{ color: '#2980b9' }}>❄️ الثلاجة: {typeCount.freezer}</div>
-        </div>
+          {/* الإحصائيات */}
+          <div style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold', color: '#3D2817', fontSize: '14px', lineHeight: '2' }}>
+            <div>🐑 <span style={{ color: '#3D2817' }}>الإجمالي: {typeCount.total}</span></div>
+            <div>✓ <span style={{ color: '#27ae60' }}>النشطة: {typeCount.active}</span></div>
+            <div>⚠️ <span style={{ color: '#e74c3c' }}>المريضة: {typeCount.sick}</span></div>
+            <div>💰 <span style={{ color: '#3498db' }}>المباع: {typeCount.sold}</span></div>
+            <div>❄️ <span style={{ color: '#2980b9' }}>الثلاجة: {typeCount.freezer}</span></div>
+          </div>
 
-        <button
-          onClick={() => { setAnimalForm({ number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0], status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '', saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular', slaughterLocation: '', slaughterNotes: '', deathDate: '' }); setEditingId(null); setShowModal(true); }}
-          style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-        >
-          ➕ إضافة حيوان
-        </button>
+          <button
+            onClick={() => { setAnimalForm({ number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0], status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '', saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular', slaughterLocation: '', slaughterNotes: '', deathDate: '' }); setEditingId(null); setShowModal(true); }}
+            style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+          >
+            ➕ إضافة حيوان
+          </button>
 
-        {/* الجدول */}
-        <div style={{ overflowX: 'auto', background: 'white', borderRadius: '8px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-            <thead>
-              <tr style={{ background: '#f0f0f0', borderBottom: '2px solid #ddd' }}>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الرقم</th>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الجنس</th>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>العمر</th>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الحالة</th>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الصحة</th>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>ملاحظات</th>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الإجراءات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedAnimals.map(animal => {
-                const statusColor = getTypeColor(selectedAnimalType);
-                const notes = animal.healthNotes || animal.notes || '-';
-                const notesShort = notes.length > 20 ? notes.substring(0, 20) + '...' : notes;
-                
-                return (
-                  <tr key={animal.id} style={{ borderBottom: '1px solid #eee', background: statusColor }}>
-                    <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(selectedAnimalType) }}>{animal.number}</td>
-                    <td style={{ padding: '10px' }}>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</td>
-                    <td style={{ padding: '10px' }}>{formatAge(animal.birthDate)}</td>
-                    <td style={{ padding: '10px', color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
-                      {animal.status === 'active' ? '✓ نشط' : animal.status === 'sold' ? '💰 مباع' : '🔪 مذبوح'}
-                    </td>
-                    <td style={{ padding: '10px', color: animal.healthStatus === 'healthy' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
-                      {animal.healthStatus === 'healthy' ? '✓ سليمة' : '⚠️ مريضة'}
-                    </td>
-                    <td style={{ padding: '10px', fontSize: '11px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }} title={notes}>
-                      {notesShort}
-                    </td>
-                    <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>
-                      <button onClick={() => { setSelectedAnimal(animal); setShowDetailModal(true); }} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>👁️</button>
-                      <button onClick={() => handleEditAnimal(animal.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>✏️</button>
-                      <button onClick={() => handleDeleteAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>🗑️</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {sortedAnimals.length === 0 && (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>لا توجد حيوانات مسجلة</div>
-          )}
+          {/* الجدول */}
+          <div style={{ overflowX: 'auto', background: 'white', borderRadius: '8px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ background: '#f0f0f0', borderBottom: '2px solid #ddd' }}>
+                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الرقم</th>
+                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الجنس</th>
+                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>العمر</th>
+                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الحالة</th>
+                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الصحة</th>
+                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>ملاحظات</th>
+                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedAnimals.map(animal => {
+                  const statusColor = getTypeColor(selectedAnimalType);
+                  const notes = animal.healthNotes || animal.notes || '-';
+                  const notesShort = notes.length > 20 ? notes.substring(0, 20) + '...' : notes;
+                  
+                  return (
+                    <tr key={animal.id} style={{ borderBottom: '1px solid #eee', background: statusColor }}>
+                      <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(selectedAnimalType) }}>{animal.number}</td>
+                      <td style={{ padding: '10px' }}>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</td>
+                      <td style={{ padding: '10px' }}>{formatAge(animal.birthDate)}</td>
+                      <td style={{ padding: '10px', color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
+                        {animal.status === 'active' ? '✓ نشط' : animal.status === 'sold' ? '💰 مباع' : '🔪 مذبوح'}
+                      </td>
+                      <td style={{ padding: '10px', color: animal.healthStatus === 'healthy' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
+                        {animal.healthStatus === 'healthy' ? '✓ سليمة' : '⚠️ مريضة'}
+                      </td>
+                      <td style={{ padding: '10px', fontSize: '11px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }} title={notes}>
+                        {notesShort}
+                      </td>
+                      <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>
+                        <button onClick={() => { setSelectedAnimal(animal); setShowDetailModal(true); }} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>👁️</button>
+                        <button onClick={() => handleEditAnimal(animal.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>✏️</button>
+                        <button onClick={() => handleDeleteAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>🗑️</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {sortedAnimals.length === 0 && (
+              <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>لا توجد حيوانات مسجلة</div>
+            )}
+          </div>
         </div>
       </div>
 
