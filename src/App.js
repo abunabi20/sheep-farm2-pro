@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 // Firebase fallback with localStorage sync
 const getStorageKey = (userId, type) => `farm_${userId}_${type}`;
@@ -392,18 +392,7 @@ const App = () => {
       charity: 0,
       freezer,
     };
-    
-    return {
-      total,
-      active: Object.values(typeAnimals).filter(a => a.status === 'active').length,
-      productive: Object.values(typeAnimals).filter(a => a.status === 'productive').length,
-      sick: Object.values(typeAnimals).filter(a => a.healthStatus === 'sick').length,
-      dead: Object.values(typeAnimals).filter(a => a.status === 'dead').length,
-      sold: Object.values(typeAnimals).filter(a => a.status === 'sold').length,
-      charity: Object.values(typeAnimals).filter(a => a.slaughterType === 'charity').length,
-      freezer: Object.values(typeAnimals).filter(a => a.slaughterLocation === 'freezer').length,
-    };
-  }, [animals, selectedAnimalType]);
+  }, [animals]);
 
   // شاشة اختيار النوع
   // الصفحة الرئيسية
@@ -777,3 +766,5 @@ const App = () => {
 };
 
 export default App;
+
+    
