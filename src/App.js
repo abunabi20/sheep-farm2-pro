@@ -152,10 +152,10 @@ const App = () => {
         try {
           setAnimals(JSON.parse(savedAnimals));
         } catch (e) {
-          setAnimals({});
+          setAnimals({ [type]: {} });
         }
       } else {
-        setAnimals({});
+        setAnimals({ [type]: {} });
       }
     }
   };
@@ -262,6 +262,23 @@ const App = () => {
     const updated = [...animalTypes, newTypeName];
     setAnimalTypes(updated);
     if (user) localStorage.setItem(`animalTypes_${user.id}`, JSON.stringify(updated));
+    
+    // تحميل البيانات للنوع الجديد
+    const savedAnimals = localStorage.getItem(getStorageKey(user.id, newTypeName));
+    if (savedAnimals) {
+      try {
+        setAnimals(JSON.parse(savedAnimals));
+      } catch (e) {
+        setAnimals({ [newTypeName]: {} });
+      }
+    } else {
+      setAnimals({ [newTypeName]: {} });
+    }
+    
+    // الانتقال للنوع الجديد
+    setSelectedAnimalType(newTypeName);
+    localStorage.setItem(`selectedType_${user.id}`, newTypeName);
+    
     setNewTypeName('');
     setShowAddType(false);
   };
