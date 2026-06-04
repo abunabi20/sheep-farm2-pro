@@ -1,4 +1,4 @@
-    import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 // Firebase fallback with localStorage sync
 const getStorageKey = (userId, type) => `farm_${userId}_${type}`;
@@ -51,6 +51,7 @@ const App = () => {
   const [newTypeName, setNewTypeName] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  const [filterType, setFilterType] = useState('all'); // Filter for viewing
   
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -343,22 +344,54 @@ const App = () => {
   };
 
   const sortedAnimals = useMemo(() => {
-    if (!selectedAnimalType || !animals[selectedAnimalType]) return [];
-    const typeAnimals = animals[selectedAnimalType] || {};
-    return Object.entries(typeAnimals)
-      .map(([id, data]) => ({ id, ...data }))
-      .sort((a, b) => parseInt(a.number) - parseInt(b.number));
-  }, [animals, selectedAnimalType]);
+    let allAnimals = [];
+    
+    // جمع جميع الحيوانات من جميع الأنواع
+    Object.entries(animals).forEach(([type, typeAnimals]) => {
+      if (typeAnimals && typeof typeAnimals === 'object') {
+        Object.entries(typeAnimals).forEach(([id, data]) => {
+          allAnimals.push({ id, type, ...data });
+        });
+      }
+    });
+    
+    // تصفية حسب النوع المختار
+    if (filterType !== 'all') {
+      allAnimals = allAnimals.filter(a => a.type === filterType);
+    }
+    
+    // ترتيب حسب الرقم
+    return allAnimals.sort((a, b) => parseInt(a.number) - parseInt(b.number));
+  }, [animals, filterType]);
 
   const typeCount = useMemo(() => {
-    if (!selectedAnimalType || !animals[selectedAnimalType]) {
-      return {
-        total: 0, active: 0, productive: 0, sick: 0,
-        dead: 0, sold: 0, charity: 0, freezer: 0,
-      };
-    }
-    const typeAnimals = animals[selectedAnimalType] || {};
-    const total = Object.keys(typeAnimals).length;
+    let allAnimals = [];
+    
+    // جمع جميع الحيوانات
+    Object.entries(animals).forEach(([type, typeAnimals]) => {
+      if (typeAnimals && typeof typeAnimals === 'object') {
+        Object.entries(typeAnimals).forEach(([id, data]) => {
+          allAnimals.push({ ...data });
+        });
+      }
+    });
+    
+    const total = allAnimals.length;
+    const active = allAnimals.filter(a => a.status === 'active').length;
+    const sick = allAnimals.filter(a => a.healthStatus === 'sick').length;
+    const sold = allAnimals.filter(a => a.status === 'sold').length;
+    const freezer = allAnimals.filter(a => a.status === 'freezer').length;
+    
+    return {
+      total,
+      active,
+      productive: 0,
+      sick,
+      dead: 0,
+      sold,
+      charity: 0,
+      freezer,
+    };
     
     return {
       total,
@@ -373,81 +406,6 @@ const App = () => {
   }, [animals, selectedAnimalType]);
 
   // شاشة اختيار النوع
-  if (user && !selectedAnimalType) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
-        <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '600px', width: '90%', textAlign: 'center' }}>
-          <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🐑 اختر نوع الحيوان</h1>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: animalTypes.length > 2 ? '1fr 1fr' : '1fr', gap: '15px', marginBottom: '30px' }}>
-            {animalTypes.map(type => (
-              <button
-                key={type}
-                onClick={() => handleSelectAnimalType(type)}
-                style={{
-                  padding: '30px 20px',
-                  background: getTypeColor(type),
-                  border: `3px solid ${getTypeTextColor(type)}`,
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold',
-                  color: getTypeTextColor(type),
-                }}
-              >
-                {type === 'sheep' ? '🐑 ضان' : type === 'goat' ? '🐐 ماعز' : `🐄 ${type}`}
-              </button>
-            ))}
-          </div>
-
-          <button onClick={() => setShowAddType(true)} style={{ width: '100%', padding: '15px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '10px', fontSize: '14px' }}>
-            ➕ إضافة نوع جديد
-          </button>
-
-          {showAddType && (
-            <div style={{ background: '#f9f7f4', padding: '20px', borderRadius: '8px', marginBottom: '15px' }}>
-              <input 
-                type="text" 
-                placeholder="مثال: بقر، طيور، إبل، خيل..." 
-                value={newTypeName} 
-                onChange={(e) => setNewTypeName(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleAddType()}
-                style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', marginBottom: '10px', fontSize: '14px' }} 
-              />
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={handleAddType} style={{ flex: 1, background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إضافة</button>
-                <button onClick={() => { setShowAddType(false); setNewTypeName(''); }} style={{ flex: 1, background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
-              </div>
-            </div>
-          )}
-
-          <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>
-            تسجيل الخروج
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // شاشة الدخول
-  if (!user) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
-        <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '500px', width: '90%' }}>
-          <h1 style={{ color: '#3D2817', textAlign: 'center', marginBottom: '30px' }}>🐑 FarmHub Pro</h1>
-          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>دخول</h2>
-            {loginError && <div style={{ color: '#e74c3c', background: '#ffe8e8', padding: '10px', borderRadius: '6px', fontSize: '13px' }}>{loginError}</div>}
-            <input type="email" placeholder="البريد الإلكتروني" value={loginData.email} onChange={(e) => setLoginData(p => ({ ...p, email: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-            <input type="password" placeholder="الباسورد" value={loginData.password} onChange={(e) => setLoginData(p => ({ ...p, password: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-            <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button>
-            <p style={{ color: '#666', fontSize: '12px', textAlign: 'center' }}>لا تملك حساب؟ ادخل بريدك الجديد للتسجيل التلقائي</p>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
   // الصفحة الرئيسية
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh', background: '#f9f7f4' }}>
@@ -461,12 +419,8 @@ const App = () => {
           {user.role === 'admin' ? '👑 مشرف' : '👤 مستخدم'}
         </p>
         <p style={{ color: '#E8D5C4', fontSize: '11px', textAlign: 'center', marginBottom: '20px', background: '#5D4E37', padding: '8px', borderRadius: '4px', fontWeight: 'bold' }}>
-          {selectedAnimalType === 'sheep' ? '🐑 الضان' : selectedAnimalType === 'goat' ? '🐐 الماعز' : selectedAnimalType}
+          جميع الحيوانات 🐄
         </p>
-        
-        <button onClick={() => setSelectedAnimalType(null)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>
-          ↩️ تغيير النوع
-        </button>
 
         <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
           <button onClick={() => setShowChangePassword(true)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>
@@ -488,9 +442,21 @@ const App = () => {
       {/* المحتوى الرئيسي */}
       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, marginLeft: '260px', overflowY: 'auto', background: '#f9f7f4', padding: '30px', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ marginBottom: '20px', color: '#3D2817' }}>
-            {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
-          </h1>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h1 style={{ color: '#3D2817', margin: 0 }}>🐄 إدارة جميع الحيوانات</h1>
+            <select 
+              value={filterType} 
+              onChange={(e) => setFilterType(e.target.value)}
+              style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: '6px', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', color: '#3D2817' }}
+            >
+              <option value="all">📊 الكل</option>
+              {Object.keys(animals).map(type => (
+                <option key={type} value={type}>
+                  {type === 'sheep' ? '🐑 الضان' : type === 'goat' ? '🐐 الماعز' : `🐄 ${type}`}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* الإحصائيات */}
           <div style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold', color: '#3D2817', fontSize: '14px', lineHeight: '2' }}>
@@ -513,6 +479,7 @@ const App = () => {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
                 <tr style={{ background: '#f0f0f0', borderBottom: '2px solid #ddd' }}>
+                  <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>النوع</th>
                   <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الرقم</th>
                   <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>الجنس</th>
                   <th style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>العمر</th>
@@ -524,13 +491,16 @@ const App = () => {
               </thead>
               <tbody>
                 {sortedAnimals.map(animal => {
-                  const statusColor = getTypeColor(selectedAnimalType);
+                  const statusColor = getTypeColor(animal.type);
                   const notes = animal.healthNotes || animal.notes || '-';
                   const notesShort = notes.length > 20 ? notes.substring(0, 20) + '...' : notes;
                   
                   return (
                     <tr key={animal.id} style={{ borderBottom: '1px solid #eee', background: statusColor }}>
-                      <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(selectedAnimalType) }}>{animal.number}</td>
+                      <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(animal.type) }}>
+                        {animal.type === 'sheep' ? '🐑 الضان' : animal.type === 'goat' ? '🐐 الماعز' : `🐄 ${animal.type}`}
+                      </td>
+                      <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(animal.type) }}>{animal.number}</td>
                       <td style={{ padding: '10px' }}>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</td>
                       <td style={{ padding: '10px' }}>{formatAge(animal.birthDate)}</td>
                       <td style={{ padding: '10px', color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
@@ -807,5 +777,3 @@ const App = () => {
 };
 
 export default App;
-
-    
