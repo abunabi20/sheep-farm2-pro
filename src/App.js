@@ -297,14 +297,15 @@ const App = () => {
     return '#333';
   };
 
-  const typeAnimals = animals[selectedAnimalType] || {};
   const sortedAnimals = useMemo(() => {
+    const typeAnimals = animals[selectedAnimalType] || {};
     return Object.entries(typeAnimals)
       .map(([id, data]) => ({ id, ...data }))
       .sort((a, b) => parseInt(a.number) - parseInt(b.number));
-  }, [typeAnimals]);
+  }, [animals, selectedAnimalType]);
 
   const typeCount = useMemo(() => {
+    const typeAnimals = animals[selectedAnimalType] || {};
     const total = Object.keys(typeAnimals).length;
     
     const counts = {
@@ -319,7 +320,7 @@ const App = () => {
     };
     
     return counts;
-  }, [typeAnimals]);
+  }, [animals, selectedAnimalType]);
 
   // Choose Animal Type Screen
   if (user && !selectedAnimalType) {
