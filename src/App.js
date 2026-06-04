@@ -238,7 +238,6 @@ const App = () => {
     localStorage.removeItem('sheepFarmUser');
     setUser(null);
     setSelectedAnimalType(null);
-    setAuthMode('login');
     setShowChangePassword(false);
     setShowAdminPanel(false);
   };
