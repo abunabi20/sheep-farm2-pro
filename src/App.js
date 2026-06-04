@@ -37,11 +37,9 @@ const formatAge = (startDate) => {
 const App = () => {
   const [user, setUser] = useState(null);
   const [selectedAnimalType, setSelectedAnimalType] = useState(null);
-  const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [passwordData, setPasswordData] = useState({ old: '', new: '', confirm: '' });
   const [passwordError, setPasswordError] = useState('');
-  const [animalTypes, setAnimalTypes] = useState(['sheep', 'goat']);
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedAnimal, setSelectedAnimal] = useState(null);
@@ -120,15 +118,6 @@ const App = () => {
     }
   }, [user, selectedAnimalType]);
 
-  const findUserByEmail = (email) => {
-    const lowerEmail = email.toLowerCase().trim();
-    for (const [userId, userData] of Object.entries(allUsers)) {
-      if (userData.emails.includes(lowerEmail)) {
-        return { userId, role: userData.role };
-      }
-    }
-    return null;
-  };
 
 
 
