@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { LogOut, Settings } from 'lucide-react';
 
 // Default admin user
@@ -36,9 +36,7 @@ const calculateAge = (startDate) => {
 const App = () => {
   const [user, setUser] = useState(null);
   const [selectedAnimalType, setSelectedAnimalType] = useState(null);
-  const [authMode, setAuthMode] = useState('login');
   const [loginData, setLoginData] = useState({ email: '', password: '' });
-  const [activeTab, setActiveTab] = useState('animals');
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [passwordData, setPasswordData] = useState({ old: '', new: '', confirm: '' });
   const [passwordError, setPasswordError] = useState('');
@@ -305,7 +303,7 @@ const App = () => {
     return Object.entries(typeAnimals)
       .map(([id, data]) => ({ id, ...data }))
       .sort((a, b) => parseInt(a.number) - parseInt(b.number));
-  }, [typeAnimals, selectedAnimalType]);
+  }, [typeAnimals]);
 
   const typeCount = useMemo(() => {
     const total = Object.keys(typeAnimals).length;
@@ -624,3 +622,5 @@ const App = () => {
 };
 
 export default App;
+
+    
