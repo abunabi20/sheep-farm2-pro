@@ -196,6 +196,41 @@ const App = () => {
   const [feedForm, setFeedForm] = useState({ name: '', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 3 });
   const [showAddPurchase, setShowAddPurchase] = useState(false);
   const [purchaseForm, setPurchaseForm] = useState({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '' });
+
+  // ===== نظام الطاقة الشمسية =====
+  const [showSolarSystem, setShowSolarSystem] = useState(false);
+  const [solarTab, setSolarTab] = useState('batteries'); // batteries | panels | inverter | costs
+  const [batteries, setBatteries] = useState(() => {
+    const s = localStorage.getItem('solarBatteries');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddBattery, setShowAddBattery] = useState(false);
+  const [editBatteryId, setEditBatteryId] = useState(null);
+  const [batteryForm, setBatteryForm] = useState({
+    name: '', location: '', brand: '', country: '',
+    capacity: '', voltage: '', purchaseDate: '',
+    warrantyYears: 1, lifespanYears: 2, purchasePrice: '', notes: ''
+  });
+  const [panels, setPanels] = useState(() => {
+    const s = localStorage.getItem('solarPanels');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddPanel, setShowAddPanel] = useState(false);
+  const [editPanelId, setEditPanelId] = useState(null);
+  const [panelForm, setPanelForm] = useState({
+    name: '', location: '', description: '',
+    lastWash: '', washIntervalDays: 60, notes: ''
+  });
+  const [inverters, setInverters] = useState(() => {
+    const s = localStorage.getItem('solarInverters');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddInverter, setShowAddInverter] = useState(false);
+  const [editInverterId, setEditInverterId] = useState(null);
+  const [inverterForm, setInverterForm] = useState({
+    name: '', brand: '', capacity: '', purchaseDate: '',
+    warrantyYears: 2, purchasePrice: '', notes: ''
+  });
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -860,6 +895,117 @@ const App = () => {
     alert(`✓ تم تسجيل شراء ${qty} ${feed.unit} من ${feed.name}`);
   };
 
+  // ===== دوال الطاقة الشمسية =====
+  const saveBatteries = useCallback((updated) => {
+    setBatteries(updated);
+    localStorage.setItem('solarBatteries', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/solarBatteries`), updated).catch(() => {});
+  }, [user]);
+
+  const savePanels = useCallback((updated) => {
+    setPanels(updated);
+    localStorage.setItem('solarPanels', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/solarPanels`), updated).catch(() => {});
+  }, [user]);
+
+  const saveInverters = useCallback((updated) => {
+    setInverters(updated);
+    localStorage.setItem('solarInverters', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/solarInverters`), updated).catch(() => {});
+  }, [user]);
+
+  // تحميل بيانات الطاقة من Firebase
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/solarBatteries`), (snap) => { if (snap.exists()) setBatteries(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/solarPanels`), (snap) => { if (snap.exists()) setPanels(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/solarInverters`), (snap) => { if (snap.exists()) setInverters(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  // حساب الأيام المتبقية من تاريخ بداية
+  const daysRemaining = (startDate, totalDays) => {
+    if (!startDate) return null;
+    const elapsed = Math.floor((new Date() - new Date(startDate)) / 86400000);
+    return Math.max(0, totalDays - elapsed);
+  };
+
+  // نسبة مئوية للعمر المتبقي
+  const lifePct = (remaining, total) => remaining !== null ? Math.round((remaining / total) * 100) : null;
+
+  // لون العداد
+  const counterColor = (days, totalDays) => {
+    if (days === null) return '#bbb';
+    if (days === 0) return '#e74c3c';
+    const pct = days / totalDays;
+    if (pct <= 0.15) return '#e74c3c';
+    if (pct <= 0.30) return '#e67e22';
+    return '#27ae60';
+  };
+
+  const handleSaveBattery = () => {
+    if (!batteryForm.name) { alert('أدخل اسم البطارية'); return; }
+    const data = {
+      ...batteryForm,
+      capacity: parseFloat(batteryForm.capacity) || 0,
+      voltage: parseFloat(batteryForm.voltage) || 0,
+      purchasePrice: parseFloat(batteryForm.purchasePrice) || 0,
+      warrantyYears: parseFloat(batteryForm.warrantyYears) || 1,
+      lifespanYears: parseFloat(batteryForm.lifespanYears) || 2,
+    };
+    let updated;
+    if (editBatteryId) {
+      updated = batteries.map(b => b.id === editBatteryId ? { ...b, ...data } : b);
+    } else {
+      updated = [...batteries, { id: `bat_${Date.now()}`, ...data }];
+    }
+    saveBatteries(updated);
+    setBatteryForm({ name: '', location: '', brand: '', country: '', capacity: '', voltage: '', purchaseDate: '', warrantyYears: 1, lifespanYears: 2, purchasePrice: '', notes: '' });
+    setEditBatteryId(null);
+    setShowAddBattery(false);
+  };
+
+  const handleSavePanel = () => {
+    if (!panelForm.name) { alert('أدخل اسم/رقم اللوح'); return; }
+    const data = { ...panelForm, washIntervalDays: parseInt(panelForm.washIntervalDays) || 60 };
+    let updated;
+    if (editPanelId) {
+      updated = panels.map(p => p.id === editPanelId ? { ...p, ...data } : p);
+    } else {
+      updated = [...panels, { id: `panel_${Date.now()}`, ...data }];
+    }
+    savePanels(updated);
+    setPanelForm({ name: '', location: '', description: '', lastWash: '', washIntervalDays: 60, notes: '' });
+    setEditPanelId(null);
+    setShowAddPanel(false);
+  };
+
+  const handleSaveInverter = () => {
+    if (!inverterForm.name) { alert('أدخل اسم الإنفرتر'); return; }
+    const data = {
+      ...inverterForm,
+      capacity: parseFloat(inverterForm.capacity) || 0,
+      purchasePrice: parseFloat(inverterForm.purchasePrice) || 0,
+      warrantyYears: parseFloat(inverterForm.warrantyYears) || 2,
+    };
+    let updated;
+    if (editInverterId) {
+      updated = inverters.map(i => i.id === editInverterId ? { ...i, ...data } : i);
+    } else {
+      updated = [...inverters, { id: `inv_${Date.now()}`, ...data }];
+    }
+    saveInverters(updated);
+    setInverterForm({ name: '', brand: '', capacity: '', purchaseDate: '', warrantyYears: 2, purchasePrice: '', notes: '' });
+    setEditInverterId(null);
+    setShowAddInverter(false);
+  };
+
+  // إجماليات تكاليف الطاقة
+  const solarCosts = useMemo(() => {
+    const totalBatteryCost = batteries.reduce((s, b) => s + (parseFloat(b.purchasePrice) || 0), 0);
+    const totalInverterCost = inverters.reduce((s, i) => s + (parseFloat(i.purchasePrice) || 0), 0);
+    return { totalBatteryCost, totalInverterCost, grandTotal: totalBatteryCost + totalInverterCost };
+  }, [batteries, inverters]);
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -1140,6 +1286,7 @@ const App = () => {
             <button onClick={() => { setShowVetLibrary(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🩺 المكتبة البيطرية</button>
             <button onClick={() => { setShowPumpSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1c2833', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>⚙️ مراقبة المواطير</button>
             <button onClick={() => { setShowFeedSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6e4b1f', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🌾 إدارة الأعلاف</button>
+            <button onClick={() => { setShowSolarSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>☀️ الطاقة الشمسية</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -1593,6 +1740,401 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal الطاقة الشمسية ===== */}
+      {showSolarSystem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowSolarSystem(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '780px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #1a6b3c, #f39c12)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>☀️ نظام الطاقة الشمسية</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.9 }}>البطاريات · الألواح · الإنفرتر · التكاليف</p>
+              </div>
+              {/* تنبيه عام */}
+              {(() => {
+                const alerts = [
+                  ...batteries.filter(b => { const d = daysRemaining(b.purchaseDate, b.warrantyYears * 365); return d !== null && d === 0; }),
+                  ...panels.filter(p => { const d = daysRemaining(p.lastWash, p.washIntervalDays); return d !== null && d === 0; }),
+                ].length;
+                return alerts > 0 ? <div style={{ background: '#e74c3c', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>⚠️ {alerts} تنبيه عاجل</div> : null;
+              })()}
+            </div>
+
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f9fdf5', overflowX: 'auto' }}>
+              {[
+                { key: 'batteries', label: '🔋 البطاريات' },
+                { key: 'panels', label: '☀️ الألواح' },
+                { key: 'inverter', label: '⚡ الإنفرتر' },
+                { key: 'costs', label: '💰 التكاليف' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setSolarTab(tab.key)} style={{ flex: '0 0 auto', padding: '11px 16px', background: solarTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: solarTab === tab.key ? '3px solid #1a6b3c' : '3px solid transparent', cursor: 'pointer', fontWeight: solarTab === tab.key ? 'bold' : 'normal', color: solarTab === tab.key ? '#1a6b3c' : '#888', fontSize: isMobile ? '11px' : '13px', whiteSpace: 'nowrap' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: '580px', overflowY: 'auto', padding: '15px 20px' }}>
+
+              {/* ===== تبويب البطاريات ===== */}
+              {solarTab === 'batteries' && (
+                <div>
+                  {/* ملخص */}
+                  {batteries.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '8px', marginBottom: '15px' }}>
+                      {[
+                        { label: 'عدد البطاريات', val: batteries.length, color: '#1a6b3c', icon: '🔋' },
+                        { label: 'إجمالي الطاقة', val: batteries.reduce((s, b) => s + (parseFloat(b.capacity) || 0), 0) + ' Ah', color: '#f39c12', icon: '⚡' },
+                        { label: 'إجمالي التكلفة', val: solarCosts.totalBatteryCost.toLocaleString() + ' ر', color: '#27ae60', icon: '💰' },
+                        { label: 'ضمان منتهي', val: batteries.filter(b => daysRemaining(b.purchaseDate, b.warrantyYears * 365) === 0).length, color: '#e74c3c', icon: '⚠️' },
+                      ].map(s => (
+                        <div key={s.label} style={{ background: '#f9fdf5', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #d5f5e3' }}>
+                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: s.color }}>{s.icon} {s.val}</div>
+                          <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* بطاقات البطاريات */}
+                  {batteries.map(bat => {
+                    const warrantyDays = Math.round(bat.warrantyYears * 365);
+                    const lifespanDays = Math.round(bat.lifespanYears * 365);
+                    const warrantyLeft = daysRemaining(bat.purchaseDate, warrantyDays);
+                    const lifespanLeft = daysRemaining(bat.purchaseDate, lifespanDays);
+                    const wPct = lifePct(warrantyLeft, warrantyDays);
+                    const lPct = lifePct(lifespanLeft, lifespanDays);
+                    const wColor = counterColor(warrantyLeft, warrantyDays);
+                    const lColor = counterColor(lifespanLeft, lifespanDays);
+                    const isWarrantyExpired = warrantyLeft === 0;
+                    const isLifeExpired = lifespanLeft === 0;
+
+                    return (
+                      <div key={bat.id} style={{ background: isLifeExpired ? '#fff0f0' : isWarrantyExpired ? '#fff8f0' : '#f9fdf5', border: `2px solid ${isLifeExpired ? '#e74c3c' : isWarrantyExpired ? '#e67e22' : '#a9dfbf'}`, borderRadius: '12px', padding: '15px', marginBottom: '12px' }}>
+                        {/* رأس البطارية */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#1a3a2a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              🔋 {bat.name}
+                              {isLifeExpired && <span style={{ background: '#e74c3c', color: 'white', fontSize: '10px', padding: '2px 7px', borderRadius: '4px', animation: 'pulse 1s infinite' }}>انتهى العمر!</span>}
+                              {isWarrantyExpired && !isLifeExpired && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '2px 7px', borderRadius: '4px' }}>انتهى الضمان</span>}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#666', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                              {bat.location && <span>📍 {bat.location}</span>}
+                              {bat.brand && <span>🏷️ {bat.brand}</span>}
+                              {bat.country && <span>🌍 {bat.country}</span>}
+                              {bat.capacity && <span>⚡ {bat.capacity} Ah</span>}
+                              {bat.voltage && <span>🔌 {bat.voltage}V</span>}
+                            </div>
+                            {bat.purchaseDate && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>📅 تاريخ الشراء: {new Date(bat.purchaseDate).toLocaleDateString('ar-SA')}</div>}
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button onClick={() => { setBatteryForm({ name: bat.name, location: bat.location||'', brand: bat.brand||'', country: bat.country||'', capacity: bat.capacity||'', voltage: bat.voltage||'', purchaseDate: bat.purchaseDate||'', warrantyYears: bat.warrantyYears, lifespanYears: bat.lifespanYears, purchasePrice: bat.purchasePrice||'', notes: bat.notes||'' }); setEditBatteryId(bat.id); setShowAddBattery(true); }} style={{ background: '#f0f9f6', border: '1px solid #1a6b3c', color: '#1a6b3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { if (window.confirm(`حذف "${bat.name}"؟`)) saveBatteries(batteries.filter(b => b.id !== bat.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                          </div>
+                        </div>
+
+                        {/* العدادات التنازلية */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          {/* عداد الضمان */}
+                          <div style={{ background: isWarrantyExpired ? '#fff0f0' : 'white', borderRadius: '10px', padding: '10px', border: `1.5px solid ${wColor}` }}>
+                            <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#555', marginBottom: '5px' }}>🛡️ الضمان ({bat.warrantyYears} سنة)</div>
+                            <div style={{ fontSize: '20px', fontWeight: 'bold', color: wColor, textAlign: 'center', padding: '5px 0' }}>
+                              {warrantyLeft === 0 ? '⚠️ منتهي' : warrantyLeft === null ? '—' : `${warrantyLeft} يوم`}
+                            </div>
+                            {wPct !== null && warrantyLeft > 0 && (
+                              <div style={{ height: '6px', background: '#eee', borderRadius: '3px', marginTop: '5px' }}>
+                                <div style={{ height: '100%', width: `${wPct}%`, background: wColor, borderRadius: '3px' }} />
+                              </div>
+                            )}
+                            {warrantyLeft !== null && warrantyLeft > 0 && <div style={{ fontSize: '10px', color: '#aaa', marginTop: '3px', textAlign: 'center' }}>{wPct}% متبقي</div>}
+                          </div>
+                          {/* عداد العمر الافتراضي */}
+                          <div style={{ background: isLifeExpired ? '#fff0f0' : 'white', borderRadius: '10px', padding: '10px', border: `1.5px solid ${lColor}` }}>
+                            <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#555', marginBottom: '5px' }}>⏳ العمر الافتراضي ({bat.lifespanYears} سنة)</div>
+                            <div style={{ fontSize: '20px', fontWeight: 'bold', color: lColor, textAlign: 'center', padding: '5px 0' }}>
+                              {lifespanLeft === 0 ? '🔴 استبدل!' : lifespanLeft === null ? '—' : `${lifespanLeft} يوم`}
+                            </div>
+                            {lPct !== null && lifespanLeft > 0 && (
+                              <div style={{ height: '6px', background: '#eee', borderRadius: '3px', marginTop: '5px' }}>
+                                <div style={{ height: '100%', width: `${lPct}%`, background: lColor, borderRadius: '3px' }} />
+                              </div>
+                            )}
+                            {lifespanLeft !== null && lifespanLeft > 0 && <div style={{ fontSize: '10px', color: '#aaa', marginTop: '3px', textAlign: 'center' }}>{lPct}% متبقي</div>}
+                          </div>
+                        </div>
+
+                        {/* السعر والملاحظات */}
+                        <div style={{ marginTop: '8px', display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '12px' }}>
+                          {bat.purchasePrice > 0 && <span style={{ background: '#d5f5e3', color: '#1a6b3c', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>💰 {parseFloat(bat.purchasePrice).toLocaleString()} ريال</span>}
+                          {bat.notes && <span style={{ color: '#888' }}>📝 {bat.notes}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {batteries.length === 0 && !showAddBattery && (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔋</div>
+                      <div>أضف بطاريات المشروع</div>
+                    </div>
+                  )}
+
+                  {/* نموذج إضافة بطارية */}
+                  {showAddBattery ? (
+                    <div style={{ background: '#f0fdf5', border: '2px solid #1a6b3c', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
+                      <h4 style={{ color: '#1a6b3c', margin: '0 0 12px' }}>{editBatteryId ? '✏️ تعديل بطارية' : '➕ إضافة بطارية'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم/رقم البطارية *</label><input value={batteryForm.name} onChange={e => setBatteryForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: بطارية 1 - موقع أ" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📍 الموقع</label><input value={batteryForm.location} onChange={e => setBatteryForm(p => ({ ...p, location: e.target.value }))} placeholder="مثال: غرفة الكهرباء - شمال" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🏷️ الماركة</label><input value={batteryForm.brand} onChange={e => setBatteryForm(p => ({ ...p, brand: e.target.value }))} placeholder="مثال: Trojan, Narada" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🌍 دولة الصنع</label><input value={batteryForm.country} onChange={e => setBatteryForm(p => ({ ...p, country: e.target.value }))} placeholder="مثال: الصين، أمريكا" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>⚡ السعة (Ah)</label><input type="number" min="0" value={batteryForm.capacity} onChange={e => setBatteryForm(p => ({ ...p, capacity: e.target.value }))} placeholder="مثال: 200" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🔌 الجهد (V)</label><input type="number" min="0" value={batteryForm.voltage} onChange={e => setBatteryForm(p => ({ ...p, voltage: e.target.value }))} placeholder="مثال: 12" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء</label><input type="date" value={batteryForm.purchaseDate} onChange={e => setBatteryForm(p => ({ ...p, purchaseDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر الشراء (ريال)</label><input type="number" min="0" value={batteryForm.purchasePrice} onChange={e => setBatteryForm(p => ({ ...p, purchasePrice: e.target.value }))} placeholder="مثال: 800" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🛡️ مدة الضمان (سنوات)</label>
+                          <select value={batteryForm.warrantyYears} onChange={e => setBatteryForm(p => ({ ...p, warrantyYears: parseFloat(e.target.value) }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            {[0.5,1,1.5,2,3,5].map(y => <option key={y} value={y}>{y} سنة</option>)}
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>⏳ العمر الافتراضي (سنوات)</label>
+                          <select value={batteryForm.lifespanYears} onChange={e => setBatteryForm(p => ({ ...p, lifespanYears: parseFloat(e.target.value) }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            {[1,1.5,2,3,4,5,7,10].map(y => <option key={y} value={y}>{y} سنة</option>)}
+                          </select>
+                        </div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={batteryForm.notes} onChange={e => setBatteryForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveBattery} style={{ background: '#1a6b3c', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddBattery(false); setEditBatteryId(null); setBatteryForm({ name: '', location: '', brand: '', country: '', capacity: '', voltage: '', purchaseDate: '', warrantyYears: 1, lifespanYears: 2, purchasePrice: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddBattery(true)} style={{ width: '100%', padding: '11px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة بطارية</button>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب الألواح الشمسية ===== */}
+              {solarTab === 'panels' && (
+                <div>
+                  {panels.map(panel => {
+                    const washLeft = daysRemaining(panel.lastWash, panel.washIntervalDays);
+                    const wColor = counterColor(washLeft, panel.washIntervalDays);
+                    const isDue = washLeft === 0;
+                    const wPct = lifePct(washLeft, panel.washIntervalDays);
+                    return (
+                      <div key={panel.id} style={{ background: isDue ? '#fff0f0' : '#f9fdf5', border: `2px solid ${isDue ? '#e74c3c' : '#a9dfbf'}`, borderRadius: '12px', padding: '14px', marginBottom: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a3a2a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              ☀️ {panel.name}
+                              {isDue && <span style={{ background: '#e74c3c', color: 'white', fontSize: '10px', padding: '2px 7px', borderRadius: '4px', fontWeight: 'bold' }}>🧼 يحتاج غسيل!</span>}
+                            </div>
+                            {panel.location && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>📍 {panel.location}</div>}
+                            {panel.description && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>📝 {panel.description}</div>}
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button onClick={() => {
+                              // تسجيل غسيل الآن
+                              const today = new Date().toISOString().split('T')[0];
+                              savePanels(panels.map(p => p.id === panel.id ? { ...p, lastWash: today } : p));
+                            }} style={{ background: '#d6eaf8', border: '1px solid #2471a3', color: '#2471a3', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>🧼 تم الغسيل</button>
+                            <button onClick={() => { setPanelForm({ name: panel.name, location: panel.location||'', description: panel.description||'', lastWash: panel.lastWash||'', washIntervalDays: panel.washIntervalDays, notes: panel.notes||'' }); setEditPanelId(panel.id); setShowAddPanel(true); }} style={{ background: '#f0f9f6', border: '1px solid #1a6b3c', color: '#1a6b3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { if (window.confirm(`حذف "${panel.name}"؟`)) savePanels(panels.filter(p => p.id !== panel.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                          </div>
+                        </div>
+
+                        {/* عداد الغسيل */}
+                        <div style={{ marginTop: '10px', background: isDue ? '#fff0f0' : 'white', borderRadius: '8px', padding: '10px', border: `1px solid ${wColor}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                            <span style={{ fontSize: '12px', color: '#555' }}>🧼 الغسيل القادم (كل {panel.washIntervalDays} يوم)</span>
+                            <span style={{ fontWeight: 'bold', color: wColor, fontSize: '14px' }}>
+                              {washLeft === null ? 'لم يُسجَّل غسيل بعد' : washLeft === 0 ? '⚠️ حان وقت الغسيل!' : `${washLeft} يوم`}
+                            </span>
+                          </div>
+                          {wPct !== null && washLeft > 0 && (
+                            <div style={{ height: '6px', background: '#eee', borderRadius: '3px' }}>
+                              <div style={{ height: '100%', width: `${wPct}%`, background: wColor, borderRadius: '3px' }} />
+                            </div>
+                          )}
+                          {panel.lastWash && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '3px' }}>آخر غسيل: {new Date(panel.lastWash).toLocaleDateString('ar-SA')}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {panels.length === 0 && !showAddPanel && (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '10px' }}>☀️</div>
+                      <div>أضف الألواح الشمسية لمتابعة جدول الغسيل</div>
+                    </div>
+                  )}
+
+                  {showAddPanel ? (
+                    <div style={{ background: '#f0fdf5', border: '2px solid #1a6b3c', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
+                      <h4 style={{ color: '#1a6b3c', margin: '0 0 12px' }}>{editPanelId ? '✏️ تعديل لوح' : '➕ إضافة لوح شمسي'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم/رقم اللوح *</label><input value={panelForm.name} onChange={e => setPanelForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: لوح 1 - السطح الشمالي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📍 الموقع</label><input value={panelForm.location} onChange={e => setPanelForm(p => ({ ...p, location: e.target.value }))} placeholder="مثال: سطح المبنى الشرقي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وصف اللوح</label><input value={panelForm.description} onChange={e => setPanelForm(p => ({ ...p, description: e.target.value }))} placeholder="مثال: 400W - ماركة كانادا" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ آخر غسيل</label><input type="date" value={panelForm.lastWash} onChange={e => setPanelForm(p => ({ ...p, lastWash: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🔄 فترة الغسيل (يوم)</label>
+                          <select value={panelForm.washIntervalDays} onChange={e => setPanelForm(p => ({ ...p, washIntervalDays: parseInt(e.target.value) }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value={15}>كل 15 يوم</option>
+                            <option value={30}>كل شهر</option>
+                            <option value={45}>كل 45 يوم</option>
+                            <option value={60}>كل شهرين</option>
+                            <option value={90}>كل 3 أشهر</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={panelForm.notes} onChange={e => setPanelForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSavePanel} style={{ background: '#1a6b3c', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddPanel(false); setEditPanelId(null); setPanelForm({ name: '', location: '', description: '', lastWash: '', washIntervalDays: 60, notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddPanel(true)} style={{ width: '100%', padding: '11px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة لوح شمسي</button>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب الإنفرتر ===== */}
+              {solarTab === 'inverter' && (
+                <div>
+                  {inverters.map(inv => {
+                    const warrantyDays = Math.round(inv.warrantyYears * 365);
+                    const wLeft = daysRemaining(inv.purchaseDate, warrantyDays);
+                    const wColor = counterColor(wLeft, warrantyDays);
+                    const wPct = lifePct(wLeft, warrantyDays);
+                    return (
+                      <div key={inv.id} style={{ background: wLeft === 0 ? '#fff8f0' : '#f9fdf5', border: `2px solid ${wColor}`, borderRadius: '12px', padding: '14px', marginBottom: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#1a3a2a' }}>⚡ {inv.name}</div>
+                            <div style={{ fontSize: '12px', color: '#666', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                              {inv.brand && <span>🏷️ {inv.brand}</span>}
+                              {inv.capacity && <span>⚡ {inv.capacity} KW</span>}
+                              {inv.purchaseDate && <span>📅 {new Date(inv.purchaseDate).toLocaleDateString('ar-SA')}</span>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button onClick={() => { setInverterForm({ name: inv.name, brand: inv.brand||'', capacity: inv.capacity||'', purchaseDate: inv.purchaseDate||'', warrantyYears: inv.warrantyYears, purchasePrice: inv.purchasePrice||'', notes: inv.notes||'' }); setEditInverterId(inv.id); setShowAddInverter(true); }} style={{ background: '#f0f9f6', border: '1px solid #1a6b3c', color: '#1a6b3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { if (window.confirm(`حذف "${inv.name}"؟`)) saveInverters(inverters.filter(i => i.id !== inv.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                          </div>
+                        </div>
+                        {/* عداد الضمان */}
+                        <div style={{ background: wLeft === 0 ? '#fff0f0' : 'white', borderRadius: '8px', padding: '10px', border: `1px solid ${wColor}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                            <span style={{ fontSize: '12px', color: '#555' }}>🛡️ الضمان ({inv.warrantyYears} سنة)</span>
+                            <span style={{ fontWeight: 'bold', color: wColor }}>{wLeft === null ? '—' : wLeft === 0 ? '⚠️ منتهي' : `${wLeft} يوم`}</span>
+                          </div>
+                          {wPct !== null && wLeft > 0 && <div style={{ height: '6px', background: '#eee', borderRadius: '3px' }}><div style={{ height: '100%', width: `${wPct}%`, background: wColor, borderRadius: '3px' }} /></div>}
+                        </div>
+                        {inv.purchasePrice > 0 && <div style={{ marginTop: '8px', fontSize: '12px' }}><span style={{ background: '#d5f5e3', color: '#1a6b3c', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>💰 {parseFloat(inv.purchasePrice).toLocaleString()} ريال</span></div>}
+                        {inv.notes && <div style={{ marginTop: '6px', fontSize: '12px', color: '#888' }}>📝 {inv.notes}</div>}
+                      </div>
+                    );
+                  })}
+
+                  {inverters.length === 0 && !showAddInverter && (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '10px' }}>⚡</div>
+                      <div>أضف الإنفرتر لمتابعة ضمانه</div>
+                    </div>
+                  )}
+
+                  {showAddInverter ? (
+                    <div style={{ background: '#f0fdf5', border: '2px solid #1a6b3c', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
+                      <h4 style={{ color: '#1a6b3c', margin: '0 0 12px' }}>{editInverterId ? '✏️ تعديل إنفرتر' : '➕ إضافة إنفرتر'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم الإنفرتر *</label><input value={inverterForm.name} onChange={e => setInverterForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: إنفرتر رئيسي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الماركة</label><input value={inverterForm.brand} onChange={e => setInverterForm(p => ({ ...p, brand: e.target.value }))} placeholder="مثال: Growatt, Huawei" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>⚡ الطاقة (KW)</label><input type="number" min="0" step="0.1" value={inverterForm.capacity} onChange={e => setInverterForm(p => ({ ...p, capacity: e.target.value }))} placeholder="مثال: 5" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء</label><input type="date" value={inverterForm.purchaseDate} onChange={e => setInverterForm(p => ({ ...p, purchaseDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🛡️ الضمان (سنوات)</label>
+                          <select value={inverterForm.warrantyYears} onChange={e => setInverterForm(p => ({ ...p, warrantyYears: parseFloat(e.target.value) }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            {[1,2,3,5,7,10].map(y => <option key={y} value={y}>{y} سنة</option>)}
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر الشراء (ريال)</label><input type="number" min="0" value={inverterForm.purchasePrice} onChange={e => setInverterForm(p => ({ ...p, purchasePrice: e.target.value }))} placeholder="مثال: 3000" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={inverterForm.notes} onChange={e => setInverterForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveInverter} style={{ background: '#1a6b3c', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddInverter(false); setEditInverterId(null); setInverterForm({ name: '', brand: '', capacity: '', purchaseDate: '', warrantyYears: 2, purchasePrice: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddInverter(true)} style={{ width: '100%', padding: '11px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة إنفرتر</button>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب التكاليف ===== */}
+              {solarTab === 'costs' && (
+                <div>
+                  {/* الإجمالي الكلي */}
+                  <div style={{ background: 'linear-gradient(135deg, #1a6b3c, #f39c12)', borderRadius: '12px', padding: '18px', marginBottom: '20px', color: 'white', textAlign: 'center' }}>
+                    <div style={{ fontSize: '13px', opacity: 0.9, marginBottom: '6px' }}>💰 إجمالي تكاليف الطاقة الشمسية</div>
+                    <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{solarCosts.grandTotal.toLocaleString()} ريال</div>
+                  </div>
+
+                  {/* تفصيل حسب الفئة */}
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+                    <div style={{ background: '#f0fdf5', borderRadius: '10px', padding: '14px', border: '1px solid #a9dfbf' }}>
+                      <div style={{ fontWeight: 'bold', color: '#1a6b3c', marginBottom: '10px', fontSize: '13px' }}>🔋 البطاريات ({batteries.length})</div>
+                      {batteries.length === 0 ? <div style={{ color: '#bbb', fontSize: '12px' }}>لا توجد بطاريات</div> : batteries.map(b => (
+                        <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 0', borderBottom: '1px solid #eee' }}>
+                          <span>{b.name}</span>
+                          <span style={{ fontWeight: 'bold', color: '#1a6b3c' }}>{parseFloat(b.purchasePrice || 0).toLocaleString()} ر</span>
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', marginTop: '8px', color: '#1a6b3c' }}>
+                        <span>الإجمالي</span><span>{solarCosts.totalBatteryCost.toLocaleString()} ريال</span>
+                      </div>
+                    </div>
+
+                    <div style={{ background: '#fef9e7', borderRadius: '10px', padding: '14px', border: '1px solid #f0e68c' }}>
+                      <div style={{ fontWeight: 'bold', color: '#b7950b', marginBottom: '10px', fontSize: '13px' }}>⚡ الإنفرتر ({inverters.length})</div>
+                      {inverters.length === 0 ? <div style={{ color: '#bbb', fontSize: '12px' }}>لا يوجد إنفرتر</div> : inverters.map(i => (
+                        <div key={i.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 0', borderBottom: '1px solid #eee' }}>
+                          <span>{i.name}</span>
+                          <span style={{ fontWeight: 'bold', color: '#b7950b' }}>{parseFloat(i.purchasePrice || 0).toLocaleString()} ر</span>
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', marginTop: '8px', color: '#b7950b' }}>
+                        <span>الإجمالي</span><span>{solarCosts.totalInverterCost.toLocaleString()} ريال</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ملاحظة اقتراح */}
+                  <div style={{ background: '#f0f4ff', borderRadius: '10px', padding: '14px', border: '1px solid #d6eaf8', fontSize: '13px', color: '#2471a3' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>💡 اقتراح لتحسين إدارة الطاقة:</div>
+                    <div style={{ lineHeight: '1.8', color: '#555', fontSize: '12px' }}>
+                      ✅ تحقق من مستوى الشحن للبطاريات أسبوعياً<br/>
+                      ✅ نظّف الألواح الشمسية في الصباح الباكر أو بعد الغروب<br/>
+                      ✅ تجنب الشحن الزائد والتفريغ الكامل للإطالة عمر البطاريات<br/>
+                      ✅ راقب درجة حرارة البطاريات في الصيف — الحرارة تسرّع التلف<br/>
+                      ✅ سجّل قراءة الفولت دورياً كمؤشر على صحة البطاريات
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowSolarSystem(false)} style={{ width: '100%', background: '#1a6b3c', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
