@@ -197,6 +197,30 @@ const App = () => {
   const [farmMaintForm, setFarmMaintForm] = useState({ ...EMPTY_MAINT, area: '' });
   const [showFarmMaintSystem, setShowFarmMaintSystem] = useState(false);
   const [showAlertsCenter, setShowAlertsCenter] = useState(false);
+
+  // ===== نظام إدارة الفحول =====
+  const [showStudSystem, setShowStudSystem] = useState(false);
+  const [studTab, setStudTab] = useState('list'); // list | cycles | notes
+  const [studs, setStuds] = useState(() => {
+    const s = localStorage.getItem('studAnimals');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddStud, setShowAddStud] = useState(false);
+  const [editStudId, setEditStudId] = useState(null);
+  const [studForm, setStudForm] = useState({
+    number: '', animalType: 'sheep', breed: '',
+    isolationDays: 14, freeDays: 7,
+    status: 'free', // free | isolated
+    cycleStartDate: '',
+    vitamins: '', feedExtra: '', notes: ''
+  });
+  const [showAddStudNote, setShowAddStudNote] = useState(false);
+  const [studNoteId, setStudNoteId] = useState(null);
+  const [studNoteForm, setStudNoteForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    effective: 'yes', // yes | no | partial
+    weight: '', behavior: '', observations: '', vitaminsGiven: '', feedGiven: ''
+  });
   const DEFAULT_FEEDS = [
     { id: 'f1', name: 'شعير', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 5 },
     { id: 'f2', name: 'برسيم', unit: 'كيس', unitWeight: 30, stock: 0, minAlert: 3 },
@@ -1450,6 +1474,73 @@ const App = () => {
     return labels[status] || { text: status, color: '#888', bg: '#eee' };
   };
 
+  // ===== دوال الفحول =====
+  const saveStuds = useCallback((updated) => {
+    setStuds(updated);
+    localStorage.setItem('studAnimals', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/studs`), updated).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/studs`), (snap) => { if (snap.exists()) setStuds(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  // حساب العداد التنازلي للفحل
+  const studCountdown = (stud) => {
+    if (!stud.cycleStartDate) return null;
+    const elapsed = Math.floor((new Date() - new Date(stud.cycleStartDate)) / 86400000);
+    const targetDays = stud.status === 'isolated' ? stud.isolationDays : stud.freeDays;
+    return Math.max(0, targetDays - elapsed);
+  };
+
+  // إجمالي الدورات
+  const studCycleCount = (stud) => (stud.cycles || []).length;
+
+  const studTypeLabel = (type) => {
+    const m = { sheep: '🐑 ضان', goat: '🐐 ماعز', horse: '🐴 خيل', cattle: '🐄 بقر' };
+    return m[type] || `🐄 ${type}`;
+  };
+
+  const handleSaveStud = () => {
+    if (!studForm.number) { alert('أدخل رقم الفحل'); return; }
+    const data = { ...studForm, isolationDays: parseInt(studForm.isolationDays) || 14, freeDays: parseInt(studForm.freeDays) || 7 };
+    let updated;
+    if (editStudId) {
+      updated = studs.map(s => s.id === editStudId ? { ...s, ...data } : s);
+    } else {
+      updated = [...studs, { id: `stud_${Date.now()}`, ...data, cycles: [], notes: [] }];
+    }
+    saveStuds(updated);
+    setStudForm({ number: '', animalType: 'sheep', breed: '', isolationDays: 14, freeDays: 7, status: 'free', cycleStartDate: '', vitamins: '', feedExtra: '', notes: '' });
+    setEditStudId(null);
+    setShowAddStud(false);
+  };
+
+  // تغيير حالة الفحل (عزل / تحرير)
+  const handleToggleStudStatus = (stud) => {
+    const today = new Date().toISOString().split('T')[0];
+    const newStatus = stud.status === 'isolated' ? 'free' : 'isolated';
+    const cycles = stud.cycles || [];
+    // أضف الدورة المنتهية للسجل
+    const newCycle = { id: `cyc_${Date.now()}`, type: stud.status, startDate: stud.cycleStartDate || today, endDate: today, days: stud.status === 'isolated' ? stud.isolationDays : stud.freeDays };
+    const updated = studs.map(s => s.id === stud.id ? { ...s, status: newStatus, cycleStartDate: today, cycles: [...cycles, newCycle] } : s);
+    saveStuds(updated);
+  };
+
+  const handleSaveStudNote = () => {
+    if (!studNoteForm.observations) { alert('أدخل الملاحظات'); return; }
+    const stud = studs.find(s => s.id === studNoteId);
+    if (!stud) return;
+    const notes = stud.notes || [];
+    const newNote = { id: `sn_${Date.now()}`, ...studNoteForm };
+    const updated = studs.map(s => s.id === studNoteId ? { ...s, notes: [...notes, newNote] } : s);
+    saveStuds(updated);
+    setStudNoteForm({ date: new Date().toISOString().split('T')[0], effective: 'yes', weight: '', behavior: '', observations: '', vitaminsGiven: '', feedGiven: '' });
+    setShowAddStudNote(false);
+    setStudNoteId(null);
+  };
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -1739,6 +1830,7 @@ const App = () => {
             <button onClick={() => { setShowGasSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2e4057', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔵 مراقبة الغاز</button>
             <button onClick={() => { setShowWorkersSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#784212', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👷 إدارة العمال</button>
             <button onClick={() => { setShowFarmMaintSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#515a5a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🏗️ صيانة المزرعة</button>
+            <button onClick={() => { setShowStudSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6d4c41', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🐏 إدارة الفحول</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -2192,6 +2284,313 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal إدارة الفحول ===== */}
+      {showStudSystem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowStudSystem(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '760px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #6d4c41, #4e342e)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>🐏 إدارة الفحول</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>العزل للتسمين · العداد التنازلي · سجل الدورات · الملاحظات</p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.15)', borderRadius: '8px', padding: '6px 12px' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{studs.filter(s => s.status === 'isolated').length}</div>
+                  <div style={{ fontSize: '10px', opacity: 0.8 }}>معزول</div>
+                </div>
+                <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.15)', borderRadius: '8px', padding: '6px 12px' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{studs.filter(s => s.status === 'free').length}</div>
+                  <div style={{ fontSize: '10px', opacity: 0.8 }}>مفكوك</div>
+                </div>
+              </div>
+            </div>
+
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#fdf8f5' }}>
+              {[
+                { key: 'list', label: '🐏 الفحول' },
+                { key: 'cycles', label: '🔄 سجل الدورات' },
+                { key: 'notes', label: '📋 الملاحظات' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setStudTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: studTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: studTab === tab.key ? '3px solid #6d4c41' : '3px solid transparent', cursor: 'pointer', fontWeight: studTab === tab.key ? 'bold' : 'normal', color: studTab === tab.key ? '#6d4c41' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: '580px', overflowY: 'auto', padding: '15px 20px' }}>
+
+              {/* ===== تبويب الفحول ===== */}
+              {studTab === 'list' && (
+                <div>
+                  {studs.map(stud => {
+                    const countdown = studCountdown(stud);
+                    const isIsolated = stud.status === 'isolated';
+                    const pct = countdown !== null ? Math.round((countdown / (isIsolated ? stud.isolationDays : stud.freeDays)) * 100) : null;
+                    const barColor = countdown === 0 ? '#e74c3c' : !isIsolated ? '#27ae60' : pct > 50 ? '#2471a3' : pct > 25 ? '#e67e22' : '#e74c3c';
+                    const lastNote = (stud.notes || []).slice(-1)[0];
+
+                    return (
+                      <div key={stud.id} style={{ background: isIsolated ? '#f0f4ff' : '#f9fff9', border: `2px solid ${isIsolated ? '#2471a3' : '#27ae60'}`, borderRadius: '12px', padding: '15px', marginBottom: '12px' }}>
+                        {/* رأس البطاقة */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '16px', color: '#3d1a00', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              🐏 رقم {stud.number}
+                              <span style={{ background: isIsolated ? '#d6eaf8' : '#d5f5e3', color: isIsolated ? '#2471a3' : '#27ae60', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>
+                                {isIsolated ? '🔒 معزول للتسمين' : '🔓 مفكوك'}
+                              </span>
+                              {countdown === 0 && <span style={{ background: '#e74c3c', color: 'white', fontSize: '11px', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold' }}>⏰ انتهت المدة!</span>}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                              <span>{studTypeLabel(stud.animalType)}</span>
+                              {stud.breed && <span>السلالة: {stud.breed}</span>}
+                              <span>دورات مكتملة: <strong>{studCycleCount(stud)}</strong></span>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                            <button onClick={() => { setStudNoteId(stud.id); setShowAddStudNote(true); }} style={{ background: '#fdebd0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '5px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>📝 ملاحظة</button>
+                            <button
+                              onClick={() => { if (window.confirm(`${isIsolated ? 'تحرير' : 'عزل'} الفحل رقم ${stud.number}؟`)) handleToggleStudStatus(stud); }}
+                              style={{ background: isIsolated ? '#d5f5e3' : '#d6eaf8', border: `1px solid ${isIsolated ? '#27ae60' : '#2471a3'}`, color: isIsolated ? '#27ae60' : '#2471a3', borderRadius: '5px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                              {isIsolated ? '🔓 تحرير' : '🔒 عزل'}
+                            </button>
+                            <button onClick={() => { setStudForm({ number: stud.number, animalType: stud.animalType, breed: stud.breed||'', isolationDays: stud.isolationDays, freeDays: stud.freeDays, status: stud.status, cycleStartDate: stud.cycleStartDate||'', vitamins: stud.vitamins||'', feedExtra: stud.feedExtra||'', notes: stud.notes||'' }); setEditStudId(stud.id); setShowAddStud(true); }} style={{ background: '#f0f9f6', border: '1px solid #6d4c41', color: '#6d4c41', borderRadius: '5px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { if (window.confirm('حذف هذا الفحل؟')) saveStuds(studs.filter(s => s.id !== stud.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                          </div>
+                        </div>
+
+                        {/* العداد التنازلي */}
+                        {stud.cycleStartDate && (
+                          <div style={{ background: countdown === 0 ? '#fff0f0' : 'white', borderRadius: '10px', padding: '12px', border: `1.5px solid ${barColor}`, marginBottom: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span style={{ fontSize: '12px', color: '#555', fontWeight: 'bold' }}>
+                                {isIsolated ? `⏳ مدة العزل (${stud.isolationDays} يوم)` : `⏳ مدة التحرير (${stud.freeDays} يوم)`}
+                              </span>
+                              <span style={{ fontWeight: 'bold', fontSize: '18px', color: barColor }}>
+                                {countdown === 0 ? '🔔 انتهت!' : `${countdown} يوم`}
+                              </span>
+                            </div>
+                            {pct !== null && (
+                              <div style={{ height: '10px', background: '#eee', borderRadius: '5px' }}>
+                                <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: '5px', transition: 'width 0.3s' }} />
+                              </div>
+                            )}
+                            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                              <span>بدأ: {new Date(stud.cycleStartDate).toLocaleDateString('ar-SA')}</span>
+                              {pct !== null && <span style={{ color: barColor }}>{pct}% متبقي</span>}
+                              <span>ينتهي: {new Date(new Date(stud.cycleStartDate).getTime() + (isIsolated ? stud.isolationDays : stud.freeDays) * 86400000).toLocaleDateString('ar-SA')}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* العلف والفيتامينات */}
+                        {(stud.vitamins || stud.feedExtra) && (
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px', fontSize: '12px' }}>
+                            {stud.vitamins && <span style={{ background: '#e8f8f5', color: '#117a65', padding: '3px 8px', borderRadius: '6px' }}>💊 {stud.vitamins}</span>}
+                            {stud.feedExtra && <span style={{ background: '#fef9e7', color: '#b7950b', padding: '3px 8px', borderRadius: '6px' }}>🌾 {stud.feedExtra}</span>}
+                          </div>
+                        )}
+
+                        {/* آخر ملاحظة */}
+                        {lastNote && (
+                          <div style={{ background: '#fdf8f5', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', border: '1px solid #e8d5b0' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                              <span style={{ fontWeight: 'bold', color: '#6d4c41' }}>📋 آخر ملاحظة</span>
+                              <span style={{ color: '#888' }}>{new Date(lastNote.date).toLocaleDateString('ar-SA')}</span>
+                            </div>
+                            <div style={{ color: '#555' }}>{lastNote.observations}</div>
+                            <div style={{ marginTop: '3px', display: 'flex', gap: '8px' }}>
+                              <span style={{ color: lastNote.effective === 'yes' ? '#27ae60' : lastNote.effective === 'partial' ? '#e67e22' : '#e74c3c', fontWeight: 'bold' }}>
+                                {lastNote.effective === 'yes' ? '✅ ناجح' : lastNote.effective === 'partial' ? '⚠️ جزئي' : '❌ لم ينجح'}
+                              </span>
+                              {lastNote.weight && <span style={{ color: '#888' }}>⚖️ {lastNote.weight} كجم</span>}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {studs.length === 0 && !showAddStud && (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '10px' }}>🐏</div>
+                      <div>أضف الفحول لبدء متابعة دورات العزل</div>
+                    </div>
+                  )}
+
+                  {/* نموذج إضافة فحل */}
+                  {showAddStud ? (
+                    <div style={{ background: '#fdf5ec', border: '2px solid #6d4c41', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
+                      <h4 style={{ color: '#6d4c41', margin: '0 0 12px' }}>{editStudId ? '✏️ تعديل فحل' : '➕ إضافة فحل'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>رقم الفحل *</label><input value={studForm.number} onChange={e => setStudForm(p => ({ ...p, number: e.target.value }))} placeholder="مثال: 1234" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع الحيوان</label>
+                          <select value={studForm.animalType} onChange={e => setStudForm(p => ({ ...p, animalType: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="sheep">🐑 ضان</option>
+                            <option value="goat">🐐 ماعز</option>
+                            <option value="horse">🐴 خيل</option>
+                            <option value="cattle">🐄 بقر</option>
+                            {animalTypes.filter(t => !['sheep','goat','horse','cattle'].includes(t)).map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>السلالة / الوصف</label><input value={studForm.breed} onChange={e => setStudForm(p => ({ ...p, breed: e.target.value }))} placeholder="مثال: نجدي، عربي، شامي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>مدة العزل (يوم)</label><input type="number" min="1" max="60" value={studForm.isolationDays} onChange={e => setStudForm(p => ({ ...p, isolationDays: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>مدة التحرير (يوم)</label><input type="number" min="1" max="30" value={studForm.freeDays} onChange={e => setStudForm(p => ({ ...p, freeDays: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الحالة الحالية</label>
+                          <select value={studForm.status} onChange={e => setStudForm(p => ({ ...p, status: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="free">🔓 مفكوك</option>
+                            <option value="isolated">🔒 معزول</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ بدء الحالة الحالية</label><input type="date" value={studForm.cycleStartDate} onChange={e => setStudForm(p => ({ ...p, cycleStartDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💊 الفيتامينات المعطاة</label><input value={studForm.vitamins} onChange={e => setStudForm(p => ({ ...p, vitamins: e.target.value }))} placeholder="مثال: فيتامين E، سيلينيوم، بي كمبلكس" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🌾 العلف الإضافي</label><input value={studForm.feedExtra} onChange={e => setStudForm(p => ({ ...p, feedExtra: e.target.value }))} placeholder="مثال: شعير مضاعف، نخالة، تمر" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveStud} style={{ background: '#6d4c41', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddStud(false); setEditStudId(null); setStudForm({ number: '', animalType: 'sheep', breed: '', isolationDays: 14, freeDays: 7, status: 'free', cycleStartDate: '', vitamins: '', feedExtra: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddStud(true)} style={{ width: '100%', padding: '11px', background: '#6d4c41', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة فحل</button>
+                  )}
+
+                  {/* نصائح الفيتامينات */}
+                  <div style={{ background: '#f0fdf5', borderRadius: '10px', padding: '14px', marginTop: '14px', border: '1px solid #a9dfbf' }}>
+                    <div style={{ fontWeight: 'bold', color: '#1a6b3c', marginBottom: '8px', fontSize: '13px' }}>💡 فيتامينات تحسّن الهيجان والخصوبة:</div>
+                    <div style={{ fontSize: '12px', color: '#555', lineHeight: '1.9' }}>
+                      💊 <strong>فيتامين E + سيلينيوم</strong> — الأهم لتحسين الخصوبة وجودة الحيوانات المنوية<br/>
+                      💊 <strong>فيتامين A</strong> — ضروري لنشاط الجهاز التناسلي<br/>
+                      💊 <strong>زنك (Zinc)</strong> — يرفع مستوى التستوستيرون ويحسن الهيجان<br/>
+                      💊 <strong>بي كمبلكس</strong> — يقوي الجهاز العصبي ويزيد النشاط العام<br/>
+                      🌾 <strong>تمر + شعير مضاعف</strong> — طاقة عالية تزيد الحيوية في موسم التلقيح<br/>
+                      🌾 <strong>نخالة القمح</strong> — غنية بالزنك والمعادن المفيدة
+                    </div>
+                  </div>
+
+                  {/* Modal إضافة ملاحظة */}
+                  {showAddStudNote && studNoteId && (
+                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddStudNote(false)}>
+                      <div style={{ background: 'white', borderRadius: '12px', maxWidth: '480px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ background: 'linear-gradient(135deg, #6d4c41, #4e342e)', padding: '14px 18px', color: 'white' }}>
+                          <h3 style={{ margin: 0, fontSize: '15px' }}>📝 ملاحظة — فحل {studs.find(s => s.id === studNoteId)?.number}</h3>
+                        </div>
+                        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '11px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                            <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 التاريخ</label><input type="date" value={studNoteForm.date} onChange={e => setStudNoteForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                            <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>هل نجح العزل؟</label>
+                              <select value={studNoteForm.effective} onChange={e => setStudNoteForm(p => ({ ...p, effective: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                                <option value="yes">✅ نعم نجح</option>
+                                <option value="partial">⚠️ جزئياً</option>
+                                <option value="no">❌ لم ينجح</option>
+                              </select>
+                            </div>
+                            <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>⚖️ الوزن (كجم)</label><input type="number" step="0.5" value={studNoteForm.weight} onChange={e => setStudNoteForm(p => ({ ...p, weight: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                            <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>السلوك والنشاط</label>
+                              <select value={studNoteForm.behavior} onChange={e => setStudNoteForm(p => ({ ...p, behavior: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                                <option value="">— اختر —</option>
+                                <option value="نشيط جداً">🔥 نشيط جداً</option>
+                                <option value="نشيط">✅ نشيط</option>
+                                <option value="متوسط">⚠️ متوسط</option>
+                                <option value="خامل">❌ خامل</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💊 الفيتامينات المعطاة</label><input value={studNoteForm.vitaminsGiven} onChange={e => setStudNoteForm(p => ({ ...p, vitaminsGiven: e.target.value }))} placeholder="مثال: فيتامين E حقنة، زنك أقراص" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🌾 العلف المعطى</label><input value={studNoteForm.feedGiven} onChange={e => setStudNoteForm(p => ({ ...p, feedGiven: e.target.value }))} placeholder="مثال: 1 كجم شعير + تمر" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 الملاحظات والمرئيات *</label><textarea value={studNoteForm.observations} onChange={e => setStudNoteForm(p => ({ ...p, observations: e.target.value }))} placeholder="اكتب ملاحظاتك... مثلاً: الفحل أظهر هيجاناً واضحاً، تحسّن وزنه، لاحظت نشاطاً مضاعفاً..." rows={3} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} /></div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                            <button onClick={handleSaveStudNote} style={{ background: '#6d4c41', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                            <button onClick={() => setShowAddStudNote(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب سجل الدورات ===== */}
+              {studTab === 'cycles' && (
+                <div>
+                  {studs.map(stud => {
+                    const cycles = [...(stud.cycles || [])].sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
+                    if (cycles.length === 0) return null;
+                    return (
+                      <div key={stud.id} style={{ marginBottom: '15px' }}>
+                        <div style={{ fontWeight: 'bold', color: '#6d4c41', fontSize: '13px', marginBottom: '8px' }}>
+                          🐏 رقم {stud.number} — {studTypeLabel(stud.animalType)} · {cycles.length} دورة مكتملة
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                          {cycles.map((cyc, i) => (
+                            <div key={cyc.id} style={{ background: cyc.type === 'isolated' ? '#f0f4ff' : '#f9fff9', border: `1px solid ${cyc.type === 'isolated' ? '#c5cae9' : '#a9dfbf'}`, borderRadius: '8px', padding: '9px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                              <div style={{ fontSize: '12px' }}>
+                                <span style={{ fontWeight: 'bold', color: cyc.type === 'isolated' ? '#2471a3' : '#27ae60' }}>{cyc.type === 'isolated' ? '🔒 عزل' : '🔓 تحرير'}</span>
+                                <span style={{ color: '#888', marginRight: '8px' }}>{new Date(cyc.startDate).toLocaleDateString('ar-SA')} → {new Date(cyc.endDate).toLocaleDateString('ar-SA')}</span>
+                              </div>
+                              <span style={{ fontWeight: 'bold', color: '#555', fontSize: '13px' }}>{cyc.days} يوم</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {studs.every(s => (s.cycles || []).length === 0) && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🔄</div><div>لا توجد دورات مكتملة بعد</div></div>}
+                </div>
+              )}
+
+              {/* ===== تبويب الملاحظات ===== */}
+              {studTab === 'notes' && (
+                <div>
+                  {studs.map(stud => {
+                    const notes = [...(stud.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+                    if (notes.length === 0) return null;
+                    return (
+                      <div key={stud.id} style={{ marginBottom: '15px' }}>
+                        <div style={{ fontWeight: 'bold', color: '#6d4c41', fontSize: '13px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>🐏 رقم {stud.number} — {studTypeLabel(stud.animalType)}</span>
+                          <button onClick={() => { setStudNoteId(stud.id); setShowAddStudNote(true); }} style={{ background: '#fdebd0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '5px', padding: '3px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>📝 إضافة</button>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {notes.map(note => (
+                            <div key={note.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '5px', marginBottom: '5px' }}>
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '12px', color: '#888' }}>{new Date(note.date).toLocaleDateString('ar-SA')}</span>
+                                  <span style={{ fontWeight: 'bold', fontSize: '12px', color: note.effective === 'yes' ? '#27ae60' : note.effective === 'partial' ? '#e67e22' : '#e74c3c' }}>
+                                    {note.effective === 'yes' ? '✅ ناجح' : note.effective === 'partial' ? '⚠️ جزئي' : '❌ لم ينجح'}
+                                  </span>
+                                  {note.behavior && <span style={{ fontSize: '11px', background: '#f0f0f0', padding: '1px 6px', borderRadius: '5px' }}>{note.behavior}</span>}
+                                  {note.weight && <span style={{ fontSize: '11px', color: '#888' }}>⚖️ {note.weight} كجم</span>}
+                                </div>
+                                <button onClick={() => { if (window.confirm('حذف؟')) { const updated = studs.map(s => s.id === stud.id ? { ...s, notes: s.notes.filter(n => n.id !== note.id) } : s); saveStuds(updated); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '2px 6px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#555', lineHeight: '1.6' }}>{note.observations}</div>
+                              <div style={{ marginTop: '5px', display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '11px' }}>
+                                {note.vitaminsGiven && <span style={{ color: '#117a65' }}>💊 {note.vitaminsGiven}</span>}
+                                {note.feedGiven && <span style={{ color: '#b7950b' }}>🌾 {note.feedGiven}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {studs.every(s => (s.notes || []).length === 0) && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>📋</div><div>لا توجد ملاحظات بعد</div></div>}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowStudSystem(false)} style={{ width: '100%', background: '#6d4c41', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
