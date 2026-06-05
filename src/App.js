@@ -231,6 +231,24 @@ const App = () => {
     name: '', brand: '', capacity: '', purchaseDate: '',
     warrantyYears: 2, purchasePrice: '', notes: ''
   });
+
+  // ===== نظام مراقبة الغاز =====
+  const [showGasSystem, setShowGasSystem] = useState(false);
+  const [gasTab, setGasTab] = useState('cylinders'); // cylinders | refills | stats
+  const [gasCylinders, setGasCylinders] = useState(() => {
+    const s = localStorage.getItem('gasCylinders');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddCylinder, setShowAddCylinder] = useState(false);
+  const [editCylinderId, setEditCylinderId] = useState(null);
+  const [cylinderForm, setCylinderForm] = useState({
+    name: '', description: '', location: '', sizeKg: 25, notes: ''
+  });
+  const [showAddRefill, setShowAddRefill] = useState(false);
+  const [refillCylinderId, setRefillCylinderId] = useState(null);
+  const [refillForm, setRefillForm] = useState({
+    date: new Date().toISOString().split('T')[0], price: '', notes: ''
+  });
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -1006,6 +1024,85 @@ const App = () => {
     return { totalBatteryCost, totalInverterCost, grandTotal: totalBatteryCost + totalInverterCost };
   }, [batteries, inverters]);
 
+  // ===== دوال الغاز =====
+  const saveGasCylinders = useCallback((updated) => {
+    setGasCylinders(updated);
+    localStorage.setItem('gasCylinders', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/gasCylinders`), updated).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/gasCylinders`), (snap) => { if (snap.exists()) setGasCylinders(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  // حساب معدل الاستهلاك (أيام بين التعبئات)
+  const gasStats = useMemo(() => {
+    return gasCylinders.map(cyl => {
+      const refills = [...(cyl.refills || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+      if (refills.length === 0) return { ...cyl, avgDays: null, lastRefill: null, nextEstimate: null, totalSpent: 0, daysLeft: null };
+      const lastRefill = refills[refills.length - 1];
+      const totalSpent = refills.reduce((s, r) => s + (parseFloat(r.price) || 0), 0);
+
+      // حساب المتوسط من الفجوات بين التعبئات
+      let avgDays = null;
+      if (refills.length >= 2) {
+        const gaps = [];
+        for (let i = 1; i < refills.length; i++) {
+          const gap = Math.floor((new Date(refills[i].date) - new Date(refills[i-1].date)) / 86400000);
+          if (gap > 0) gaps.push(gap);
+        }
+        if (gaps.length > 0) avgDays = Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length);
+      }
+
+      const daysSinceLast = Math.floor((new Date() - new Date(lastRefill.date)) / 86400000);
+      const daysLeft = avgDays ? Math.max(0, avgDays - daysSinceLast) : null;
+      const nextEstimate = avgDays ? new Date(new Date(lastRefill.date).getTime() + avgDays * 86400000).toISOString().split('T')[0] : null;
+      const avgPrice = refills.length > 0 ? totalSpent / refills.length : 0;
+      const monthlyEstimate = avgDays ? (avgPrice / avgDays) * 30 : null;
+      const yearlyEstimate = avgDays ? (avgPrice / avgDays) * 365 : null;
+      const alertDays = Math.round((avgDays || 30) * 0.2); // تنبيه عند 20% متبقي
+      const needsAlert = daysLeft !== null && daysLeft <= alertDays;
+
+      return { ...cyl, refills, avgDays, lastRefill, nextEstimate, totalSpent, daysLeft, daysSinceLast, avgPrice, monthlyEstimate, yearlyEstimate, needsAlert, alertDays };
+    });
+  }, [gasCylinders]);
+
+  const gasTotalStats = useMemo(() => {
+    const total = gasStats.reduce((s, c) => s + c.totalSpent, 0);
+    const avgMonthly = gasStats.reduce((s, c) => s + (c.monthlyEstimate || 0), 0);
+    const avgYearly = gasStats.reduce((s, c) => s + (c.yearlyEstimate || 0), 0);
+    return { total, avgMonthly, avgYearly };
+  }, [gasStats]);
+
+  const handleSaveCylinder = () => {
+    if (!cylinderForm.name) { alert('أدخل اسم الأسطوانة'); return; }
+    const data = { ...cylinderForm, sizeKg: parseFloat(cylinderForm.sizeKg) || 25 };
+    let updated;
+    if (editCylinderId) {
+      updated = gasCylinders.map(c => c.id === editCylinderId ? { ...c, ...data } : c);
+    } else {
+      updated = [...gasCylinders, { id: `gas_${Date.now()}`, ...data, refills: [] }];
+    }
+    saveGasCylinders(updated);
+    setCylinderForm({ name: '', description: '', location: '', sizeKg: 25, notes: '' });
+    setEditCylinderId(null);
+    setShowAddCylinder(false);
+  };
+
+  const handleSaveRefill = () => {
+    if (!refillForm.date) { alert('أدخل تاريخ التعبئة'); return; }
+    const cyl = gasCylinders.find(c => c.id === refillCylinderId);
+    if (!cyl) return;
+    const refills = cyl.refills || [];
+    const newRefill = { id: `ref_${Date.now()}`, ...refillForm, price: parseFloat(refillForm.price) || 0 };
+    const updated = gasCylinders.map(c => c.id === refillCylinderId ? { ...c, refills: [...refills, newRefill] } : c);
+    saveGasCylinders(updated);
+    setRefillForm({ date: new Date().toISOString().split('T')[0], price: '', notes: '' });
+    setShowAddRefill(false);
+    setRefillCylinderId(null);
+  };
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -1287,6 +1384,7 @@ const App = () => {
             <button onClick={() => { setShowPumpSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1c2833', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>⚙️ مراقبة المواطير</button>
             <button onClick={() => { setShowFeedSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6e4b1f', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🌾 إدارة الأعلاف</button>
             <button onClick={() => { setShowSolarSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>☀️ الطاقة الشمسية</button>
+            <button onClick={() => { setShowGasSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2e4057', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔵 مراقبة الغاز</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -1740,6 +1838,299 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal مراقبة الغاز ===== */}
+      {showGasSystem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowGasSystem(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '760px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #2e4057, #1a2a3a)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>🔵 مراقبة غاز الطبخ</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>الأسطوانات · سجل التعبئة · معدل الاستهلاك والتكاليف</p>
+              </div>
+              {gasStats.some(c => c.needsAlert) && (
+                <div style={{ background: '#e74c3c', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>
+                  ⚠️ {gasStats.filter(c => c.needsAlert).length} أسطوانة تحتاج تعبئة قريباً
+                </div>
+              )}
+            </div>
+
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f5f7fa' }}>
+              {[
+                { key: 'cylinders', label: '🔵 الأسطوانات' },
+                { key: 'refills', label: '📋 سجل التعبئة' },
+                { key: 'stats', label: '📊 الإحصائيات والتكاليف' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setGasTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: gasTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: gasTab === tab.key ? '3px solid #2e4057' : '3px solid transparent', cursor: 'pointer', fontWeight: gasTab === tab.key ? 'bold' : 'normal', color: gasTab === tab.key ? '#2e4057' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: '580px', overflowY: 'auto', padding: '15px 20px' }}>
+
+              {/* ===== تبويب الأسطوانات ===== */}
+              {gasTab === 'cylinders' && (
+                <div>
+                  {/* ملخص سريع */}
+                  {gasCylinders.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '8px', marginBottom: '15px' }}>
+                      {[
+                        { label: 'عدد الأسطوانات', val: gasCylinders.length, color: '#2e4057', icon: '🔵' },
+                        { label: 'تحتاج تعبئة', val: gasStats.filter(c => c.needsAlert).length, color: gasStats.some(c => c.needsAlert) ? '#e74c3c' : '#27ae60', icon: '⚠️' },
+                        { label: 'إجمالي الإنفاق', val: gasTotalStats.total.toLocaleString() + ' ر', color: '#27ae60', icon: '💰' },
+                        { label: 'تكلفة شهرية متوقعة', val: gasTotalStats.avgMonthly.toFixed(0) + ' ر', color: '#e67e22', icon: '📅' },
+                      ].map(s => (
+                        <div key={s.label} style={{ background: '#f5f7fa', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #dde' }}>
+                          <div style={{ fontSize: '15px', fontWeight: 'bold', color: s.color }}>{s.icon} {s.val}</div>
+                          <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* بطاقات الأسطوانات */}
+                  {gasStats.map(cyl => {
+                    const pct = cyl.avgDays && cyl.daysLeft !== null ? Math.round((cyl.daysLeft / cyl.avgDays) * 100) : null;
+                    const barColor = pct === null ? '#bbb' : pct > 40 ? '#27ae60' : pct > 20 ? '#e67e22' : '#e74c3c';
+                    return (
+                      <div key={cyl.id} style={{ background: cyl.needsAlert ? '#fff3f3' : '#f9fbff', border: `2px solid ${cyl.needsAlert ? '#e74c3c' : '#c5cae9'}`, borderRadius: '12px', padding: '14px', marginBottom: '12px' }}>
+                        {/* رأس */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#1a2a3a', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              🔵 {cyl.name}
+                              <span style={{ fontSize: '11px', background: '#e8eaf6', color: '#2e4057', padding: '2px 7px', borderRadius: '6px' }}>{cyl.sizeKg} كجم</span>
+                              {cyl.needsAlert && <span style={{ fontSize: '11px', background: '#e74c3c', color: 'white', padding: '2px 7px', borderRadius: '6px', fontWeight: 'bold' }}>🔴 تعبئة قريباً!</span>}
+                            </div>
+                            {cyl.location && <div style={{ fontSize: '12px', color: '#888', marginTop: '3px' }}>📍 {cyl.location}</div>}
+                            {cyl.description && <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>📝 {cyl.description}</div>}
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button onClick={() => { setRefillCylinderId(cyl.id); setShowAddRefill(true); }} style={{ background: '#e8f5e9', border: '1px solid #27ae60', color: '#27ae60', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>⛽ تعبئة</button>
+                            <button onClick={() => { setCylinderForm({ name: cyl.name, description: cyl.description||'', location: cyl.location||'', sizeKg: cyl.sizeKg, notes: cyl.notes||'' }); setEditCylinderId(cyl.id); setShowAddCylinder(true); }} style={{ background: '#f0f9f6', border: '1px solid #2e4057', color: '#2e4057', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { if (window.confirm(`حذف "${cyl.name}"؟`)) saveGasCylinders(gasCylinders.filter(c => c.id !== cyl.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                          </div>
+                        </div>
+
+                        {/* إحصائيات الاستهلاك */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(110px,1fr))', gap: '8px', marginBottom: '10px' }}>
+                          <div style={{ background: 'white', borderRadius: '8px', padding: '8px', textAlign: 'center', border: '1px solid #eee' }}>
+                            <div style={{ fontWeight: 'bold', color: '#2e4057', fontSize: '15px' }}>{cyl.refills?.length || 0}</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>عدد التعبئات</div>
+                          </div>
+                          <div style={{ background: 'white', borderRadius: '8px', padding: '8px', textAlign: 'center', border: '1px solid #eee' }}>
+                            <div style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '15px' }}>{cyl.avgDays ? `${cyl.avgDays} يوم` : '—'}</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>متوسط الاستهلاك</div>
+                          </div>
+                          <div style={{ background: 'white', borderRadius: '8px', padding: '8px', textAlign: 'center', border: '1px solid #eee' }}>
+                            <div style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '15px' }}>{cyl.avgPrice ? `${cyl.avgPrice.toFixed(0)} ر` : '—'}</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>متوسط التعبئة</div>
+                          </div>
+                          <div style={{ background: cyl.needsAlert ? '#fff3f3' : 'white', borderRadius: '8px', padding: '8px', textAlign: 'center', border: `1px solid ${barColor}` }}>
+                            <div style={{ fontWeight: 'bold', color: barColor, fontSize: '15px' }}>{cyl.daysLeft !== null ? `${cyl.daysLeft} يوم` : '—'}</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>متبقي تقريباً</div>
+                          </div>
+                        </div>
+
+                        {/* شريط المتبقي */}
+                        {pct !== null && (
+                          <div style={{ marginBottom: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#888', marginBottom: '3px' }}>
+                              <span>المتبقي التقريبي</span>
+                              <span style={{ color: barColor, fontWeight: 'bold' }}>{pct}%</span>
+                            </div>
+                            <div style={{ height: '8px', background: '#eee', borderRadius: '4px' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: '4px', transition: 'width 0.3s' }} />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* آخر تعبئة والقادمة */}
+                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '12px', color: '#666' }}>
+                          {cyl.lastRefill && <span>⛽ آخر تعبئة: <strong>{new Date(cyl.lastRefill.date).toLocaleDateString('ar-SA')}</strong> ({cyl.daysSinceLast} يوم)</span>}
+                          {cyl.nextEstimate && <span style={{ color: cyl.needsAlert ? '#e74c3c' : '#2e4057' }}>📅 المتوقع القادم: <strong>{new Date(cyl.nextEstimate).toLocaleDateString('ar-SA')}</strong></span>}
+                          {cyl.lastRefill?.price > 0 && <span>💰 آخر سعر: <strong>{cyl.lastRefill.price} ر</strong></span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {gasCylinders.length === 0 && !showAddCylinder && (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔵</div>
+                      <div>أضف أسطوانات الغاز لبدء المراقبة</div>
+                    </div>
+                  )}
+
+                  {/* نموذج إضافة أسطوانة */}
+                  {showAddCylinder ? (
+                    <div style={{ background: '#f0f4ff', border: '2px solid #2e4057', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
+                      <h4 style={{ color: '#2e4057', margin: '0 0 12px' }}>{editCylinderId ? '✏️ تعديل أسطوانة' : '➕ إضافة أسطوانة'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم الأسطوانة *</label><input value={cylinderForm.name} onChange={e => setCylinderForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: غاز المطبخ الرئيسي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📍 الموقع</label><input value={cylinderForm.location} onChange={e => setCylinderForm(p => ({ ...p, location: e.target.value }))} placeholder="مثال: المطبخ الرئيسي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الوزن (كجم)</label>
+                          <select value={cylinderForm.sizeKg} onChange={e => setCylinderForm(p => ({ ...p, sizeKg: parseFloat(e.target.value) }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            {[5, 10, 12.5, 15, 25, 50].map(s => <option key={s} value={s}>{s} كجم</option>)}
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وصف / مميزات</label><input value={cylinderForm.description} onChange={e => setCylinderForm(p => ({ ...p, description: e.target.value }))} placeholder="مثال: للأفران، للمدفأة..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={cylinderForm.notes} onChange={e => setCylinderForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveCylinder} style={{ background: '#2e4057', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddCylinder(false); setEditCylinderId(null); setCylinderForm({ name: '', description: '', location: '', sizeKg: 25, notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddCylinder(true)} style={{ width: '100%', padding: '11px', background: '#2e4057', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة أسطوانة</button>
+                  )}
+
+                  {/* Modal تعبئة */}
+                  {showAddRefill && refillCylinderId && (
+                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddRefill(false)}>
+                      <div style={{ background: 'white', borderRadius: '12px', maxWidth: '400px', width: '100%', padding: '20px' }} onClick={e => e.stopPropagation()}>
+                        <h3 style={{ color: '#2e4057', margin: '0 0 15px' }}>⛽ تسجيل تعبئة — {gasCylinders.find(c => c.id === refillCylinderId)?.name}</h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ التعبئة *</label><input type="date" value={refillForm.date} onChange={e => setRefillForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر التعبئة (ريال)</label><input type="number" min="0" step="0.5" value={refillForm.price} onChange={e => setRefillForm(p => ({ ...p, price: e.target.value }))} placeholder="مثال: 85" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={refillForm.notes} onChange={e => setRefillForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '15px' }}>
+                          <button onClick={handleSaveRefill} style={{ background: '#27ae60', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                          <button onClick={() => setShowAddRefill(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب سجل التعبئة ===== */}
+              {gasTab === 'refills' && (
+                <div>
+                  {gasCylinders.map(cyl => {
+                    const refills = [...(cyl.refills || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+                    if (refills.length === 0) return (
+                      <div key={cyl.id} style={{ background: '#f9f9f9', borderRadius: '10px', padding: '12px', marginBottom: '10px', color: '#bbb', textAlign: 'center', fontSize: '12px' }}>
+                        🔵 {cyl.name} — لا توجد تعبئات مسجلة
+                      </div>
+                    );
+                    return (
+                      <div key={cyl.id} style={{ marginBottom: '15px' }}>
+                        <div style={{ fontWeight: 'bold', color: '#2e4057', fontSize: '13px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>🔵 {cyl.name} ({cyl.sizeKg} كجم)</span>
+                          <button onClick={() => { setRefillCylinderId(cyl.id); setShowAddRefill(true); }} style={{ background: '#e8f5e9', border: '1px solid #27ae60', color: '#27ae60', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>⛽ تعبئة جديدة</button>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {refills.map((r, i) => (
+                            <div key={r.id} style={{ background: i === 0 ? '#f0f4ff' : 'white', border: `1px solid ${i === 0 ? '#c5cae9' : '#eee'}`, borderRadius: '8px', padding: '10px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                              <div style={{ fontSize: '13px' }}>
+                                <span style={{ fontWeight: 'bold' }}>{new Date(r.date).toLocaleDateString('ar-SA')}</span>
+                                {i === 0 && <span style={{ marginRight: '6px', fontSize: '10px', background: '#2e4057', color: 'white', padding: '1px 5px', borderRadius: '4px' }}>آخر تعبئة</span>}
+                                {r.notes && <span style={{ fontSize: '11px', color: '#888', marginRight: '8px' }}>— {r.notes}</span>}
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                {r.price > 0 && <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '13px' }}>💰 {r.price} ر</span>}
+                                <button onClick={() => {
+                                  if (!window.confirm('حذف هذه التعبئة؟')) return;
+                                  const updated = gasCylinders.map(c => c.id === cyl.id ? { ...c, refills: c.refills.filter(x => x.id !== r.id) } : c);
+                                  saveGasCylinders(updated);
+                                }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {gasCylinders.length === 0 && <div style={{ textAlign: 'center', padding: '40px', color: '#bbb' }}>أضف أسطوانات أولاً من تبويب الأسطوانات</div>}
+                </div>
+              )}
+
+              {/* ===== تبويب الإحصائيات والتكاليف ===== */}
+              {gasTab === 'stats' && (
+                <div>
+                  {/* الإجمالي الكلي */}
+                  <div style={{ background: 'linear-gradient(135deg, #2e4057, #4a6fa5)', borderRadius: '12px', padding: '18px', marginBottom: '15px', color: 'white' }}>
+                    <div style={{ fontSize: '13px', opacity: 0.85, marginBottom: '8px' }}>💰 إجمالي إنفاق الغاز</div>
+                    <div style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '12px' }}>{gasTotalStats.total.toLocaleString()} ريال</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div style={{ background: 'rgba(255,255,255,0.15)', borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{gasTotalStats.avgMonthly.toFixed(0)} ر</div>
+                        <div style={{ fontSize: '11px', opacity: 0.8 }}>شهري متوقع</div>
+                      </div>
+                      <div style={{ background: 'rgba(255,255,255,0.15)', borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{gasTotalStats.avgYearly.toFixed(0)} ر</div>
+                        <div style={{ fontSize: '11px', opacity: 0.8 }}>سنوي متوقع</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* تفصيل لكل أسطوانة */}
+                  {gasStats.map(cyl => {
+                    if (!cyl.refills || cyl.refills.length === 0) return null;
+                    const prices = cyl.refills.map(r => parseFloat(r.price) || 0).filter(p => p > 0);
+                    const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+                    const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
+                    return (
+                      <div key={cyl.id} style={{ background: 'white', border: '1px solid #e0e4ef', borderRadius: '10px', padding: '14px', marginBottom: '10px' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#2e4057', marginBottom: '10px' }}>🔵 {cyl.name} <span style={{ fontSize: '12px', color: '#888', fontWeight: 'normal' }}>({cyl.sizeKg} كجم)</span></div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '7px', fontSize: '12px' }}>
+                          <div style={{ background: '#f0f4ff', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#2e4057' }}>{cyl.refills.length}</div><div style={{ color: '#888', fontSize: '10px' }}>تعبئة</div></div>
+                          <div style={{ background: '#f0f4ff', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e67e22' }}>{cyl.avgDays || '—'} يوم</div><div style={{ color: '#888', fontSize: '10px' }}>متوسط دورة</div></div>
+                          <div style={{ background: '#f0f4ff', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#27ae60' }}>{cyl.avgPrice?.toFixed(0) || '—'} ر</div><div style={{ color: '#888', fontSize: '10px' }}>متوسط سعر</div></div>
+                          {minPrice > 0 && <div style={{ background: '#e8f5e9', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#27ae60' }}>{minPrice} ر</div><div style={{ color: '#888', fontSize: '10px' }}>أدنى سعر</div></div>}
+                          {maxPrice > 0 && <div style={{ background: '#fff3e0', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e67e22' }}>{maxPrice} ر</div><div style={{ color: '#888', fontSize: '10px' }}>أعلى سعر</div></div>}
+                          {cyl.monthlyEstimate && <div style={{ background: '#fce4ec', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c62828' }}>{cyl.monthlyEstimate.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>شهري</div></div>}
+                          {cyl.yearlyEstimate && <div style={{ background: '#fce4ec', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c62828' }}>{cyl.yearlyEstimate.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>سنوي</div></div>}
+                          <div style={{ background: '#f3e5f5', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#7b1fa2' }}>{cyl.totalSpent.toLocaleString()} ر</div><div style={{ color: '#888', fontSize: '10px' }}>إجمالي الإنفاق</div></div>
+                        </div>
+
+                        {/* رسم بياني بسيط للأسعار */}
+                        {prices.length >= 2 && (
+                          <div style={{ marginTop: '10px' }}>
+                            <div style={{ fontSize: '11px', color: '#888', marginBottom: '5px' }}>📈 تطور الأسعار:</div>
+                            <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-end', height: '40px' }}>
+                              {[...cyl.refills].sort((a,b) => new Date(a.date)-new Date(b.date)).filter(r => r.price > 0).slice(-10).map((r, i, arr) => {
+                                const barH = Math.round((r.price / maxPrice) * 100);
+                                const isLast = i === arr.length - 1;
+                                return (
+                                  <div key={r.id} title={`${new Date(r.date).toLocaleDateString('ar-SA')}: ${r.price} ر`} style={{ flex: 1, height: `${barH}%`, background: isLast ? '#2e4057' : '#c5cae9', borderRadius: '3px 3px 0 0', minHeight: '4px', cursor: 'pointer' }} />
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* اقتراحات */}
+                  <div style={{ background: '#f0f4ff', borderRadius: '10px', padding: '14px', border: '1px solid #c5cae9', fontSize: '12px', color: '#2e4057', marginTop: '5px' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px', fontSize: '13px' }}>💡 نصائح لتوفير الغاز:</div>
+                    <div style={{ lineHeight: '2', color: '#555' }}>
+                      ✅ اشتر في أوقات انخفاض الأسعار وخزّن أسطوانة احتياطية<br/>
+                      ✅ تحقق من التسريبات بالماء والصابون دورياً<br/>
+                      ✅ أغلق الأسطوانة عند عدم الاستخدام الطويل<br/>
+                      ✅ قارن أسعار الموردين قبل التعبئة<br/>
+                      ✅ سجّل كل تعبئة فور حدوثها للحصول على معدل دقيق
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowGasSystem(false)} style={{ width: '100%', background: '#2e4057', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
