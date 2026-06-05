@@ -97,7 +97,12 @@ const App = () => {
   const [ageReportFilter, setAgeReportFilter] = useState({ type: 'all', minYears: 5, minMonths: 0 });
   const [showNumbersReport, setShowNumbersReport] = useState(false);
   const [numbersReportType, setNumbersReportType] = useState('all');
-  const [numbersReportFilter, setNumbersReportFilter] = useState('all'); // all | active | sold | dead | reuse
+  const [numbersReportFilter, setNumbersReportFilter] = useState('all');
+  const [showBirthModal, setShowBirthModal] = useState(false);
+  const [birthAnimal, setBirthAnimal] = useState(null);
+  const [birthForm, setBirthForm] = useState({ date: new Date().toISOString().split('T')[0], count: 1, gender: 'mixed', notes: '' });
+  const [showProductionReport, setShowProductionReport] = useState(false);
+  const [productionReportType, setProductionReportType] = useState('all');
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -379,6 +384,72 @@ const App = () => {
     saveAnimalToFirebase(user.id, animal.type, animal.id, updatedAnimal);
   };
 
+  // ✅ حفظ سجل ولادة
+  const handleSaveBirth = () => {
+    if (!birthForm.date || !birthForm.count) { alert('أدخل التاريخ وعدد المواليد'); return; }
+    const animal = animals[birthAnimal.type]?.[birthAnimal.id];
+    if (!animal) return;
+    const births = animal.births || {};
+    const birthId = `birth_${Date.now()}`;
+    const updatedAnimal = {
+      ...animal,
+      births: { ...births, [birthId]: { ...birthForm, count: parseInt(birthForm.count) } },
+      offspringCount: (parseInt(animal.offspringCount) || 0) + parseInt(birthForm.count)
+    };
+    saveAnimalToFirebase(user.id, birthAnimal.type, birthAnimal.id, updatedAnimal);
+    setShowBirthModal(false);
+    setBirthForm({ date: new Date().toISOString().split('T')[0], count: 1, gender: 'mixed', notes: '' });
+    alert('✓ تم تسجيل الولادة بنجاح!');
+  };
+
+  // ✅ حساب تقرير الإنتاج
+  const productionReportData = useMemo(() => {
+    const typesToSearch = productionReportType === 'all' ? Object.keys(animals) : [productionReportType];
+    let result = [];
+    typesToSearch.forEach(type => {
+      const typeAnimals = animals[type] || {};
+      Object.entries(typeAnimals).forEach(([id, data]) => {
+        if (data.gender !== 'female') return;
+        const births = data.births || {};
+        const birthsList = Object.entries(births).map(([bid, b]) => ({ id: bid, ...b })).sort((a, b) => new Date(a.date) - new Date(b.date));
+        const totalBirths = birthsList.reduce((sum, b) => sum + (parseInt(b.count) || 0), 0);
+        const age = calculateAge(data.birthDate);
+        const totalAgeMonths = age.years * 12 + age.months;
+        const entryDate = data.birthDate;
+        const yearsActive = age.years || 1;
+
+        // السنوات التي أنتجت فيها
+        const yearsWithBirths = new Set(birthsList.map(b => new Date(b.date).getFullYear()));
+        const currentYear = new Date().getFullYear();
+        const firstYear = new Date(entryDate).getFullYear();
+        const totalYears = currentYear - firstYear + 1;
+        const emptyYears = [];
+        for (let y = firstYear; y <= currentYear; y++) {
+          if (!yearsWithBirths.has(y)) emptyYears.push(y);
+        }
+
+        const avgPerYear = yearsActive > 0 ? (birthsList.length / yearsActive).toFixed(1) : 0;
+        const lastBirth = birthsList[birthsList.length - 1];
+        const firstBirth = birthsList[0];
+
+        // نقاط الإنتاج للترتيب
+        const score = (birthsList.length * 10) + totalBirths - (emptyYears.length * 3) - (data.healthStatus === 'sick' ? 5 : 0);
+
+        result.push({
+          id, type, number: data.number, birthDate: data.birthDate,
+          status: data.status, healthStatus: data.healthStatus, healthNotes: data.healthNotes,
+          notes: data.notes, age, totalAgeMonths,
+          birthsList, totalBirths, totalBirthEvents: birthsList.length,
+          yearsWithBirths: [...yearsWithBirths].sort(),
+          emptyYears, totalYears, avgPerYear,
+          lastBirth, firstBirth, score,
+          offspringCount: data.offspringCount || 0
+        });
+      });
+    });
+    return result.sort((a, b) => b.score - a.score);
+  }, [animals, productionReportType]);
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -654,6 +725,7 @@ const App = () => {
             <button onClick={() => { setShowDashboard(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📊 ملخص الإحصائيات</button>
             <button onClick={() => { setShowAgeReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👴 تقرير العويد</button>
             <button onClick={() => { setShowNumbersReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔢 تقرير الأرقام</button>
+            <button onClick={() => { setShowProductionReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#c0392b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📈 تقرير الإنتاج</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -708,6 +780,9 @@ const App = () => {
                           <button onClick={() => { setSelectedAnimal(animal); setShowDetailModal(true); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>👁️</button>
                           <button onClick={() => handleEditAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✏️</button>
                           <button onClick={() => handleDeleteAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>🗑️</button>
+                          {animal.gender === 'female' && (
+                            <button onClick={() => { setBirthAnimal({ id: animal.id, type: selectedAnimalType, number: animal.number }); setShowBirthModal(true); }} style={{ background: '#27ae60', border: 'none', cursor: 'pointer', fontSize: '14px', borderRadius: '6px', padding: '2px 6px', color: 'white', fontWeight: 'bold' }}>🐣+</button>
+                          )}
                         </div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '13px' }}>
@@ -760,7 +835,10 @@ const App = () => {
                           <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>
                             <button onClick={() => { setSelectedAnimal(animal); setShowDetailModal(true); }} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>👁️</button>
                             <button onClick={() => handleEditAnimal(animal.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>✏️</button>
-                            <button onClick={() => handleDeleteAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>🗑️</button>
+                            <button onClick={() => handleDeleteAnimal(animal.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>🗑️</button>
+                            {animal.gender === 'female' && (
+                              <button onClick={() => { setBirthAnimal({ id: animal.id, type: selectedAnimalType, number: animal.number }); setShowBirthModal(true); }} style={{ background: '#27ae60', border: 'none', cursor: 'pointer', fontSize: '11px', borderRadius: '5px', padding: '3px 6px', color: 'white', fontWeight: 'bold' }}>🐣+</button>
+                            )}
                           </td>
                         </tr>
                       );
@@ -941,6 +1019,160 @@ const App = () => {
           </div>
         </div>
       )}
+      {/* Modal تسجيل ولادة */}
+      {showBirthModal && birthAnimal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }} onClick={() => setShowBirthModal(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', maxWidth: '420px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: 'linear-gradient(135deg, #27ae60, #1e8449)', padding: '18px 22px', color: 'white' }}>
+              <h2 style={{ margin: 0, fontSize: '17px' }}>🐣 تسجيل ولادة — رقم {birthAnimal.number}</h2>
+            </div>
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>📅 تاريخ الولادة *</label>
+                <input type="date" value={birthForm.date} onChange={e => setBirthForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '9px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '14px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>🐑 عدد المواليد *</label>
+                <input type="number" min="1" max="10" value={birthForm.count} onChange={e => setBirthForm(p => ({ ...p, count: e.target.value }))} style={{ padding: '9px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '14px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>♂♀ جنس المواليد</label>
+                <select value={birthForm.gender} onChange={e => setBirthForm(p => ({ ...p, gender: e.target.value }))} style={{ padding: '9px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '14px' }}>
+                  <option value="mixed">مختلط (ذكر وأنثى)</option>
+                  <option value="male">ذكور فقط</option>
+                  <option value="female">إناث فقط</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>📝 ملاحظات</label>
+                <input type="text" placeholder="مثال: توأم، صعوبة ولادة، مولود ضعيف..." value={birthForm.notes} onChange={e => setBirthForm(p => ({ ...p, notes: e.target.value }))} style={{ padding: '9px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '14px' }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '5px' }}>
+                <button onClick={handleSaveBirth} style={{ background: '#27ae60', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>✓ حفظ</button>
+                <button onClick={() => setShowBirthModal(false)} style={{ background: '#ddd', color: '#333', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إلغاء</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal تقرير الإنتاج */}
+      {showProductionReport && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '20px', overflowY: 'auto' }} onClick={() => setShowProductionReport(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', maxWidth: '720px', width: '100%', marginTop: '20px', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #c0392b, #922b21)', padding: '20px 25px', color: 'white' }}>
+              <h2 style={{ margin: 0, fontSize: '18px' }}>📈 تقرير الإنتاج</h2>
+              <p style={{ margin: '5px 0 0', fontSize: '12px', opacity: 0.85 }}>الإناث مرتبة من الأعلى إنتاجاً — بناءً على عدد الولادات والمواليد وانتظام الإنتاج</p>
+            </div>
+
+            {/* فلتر النوع */}
+            <div style={{ padding: '15px 20px', background: '#fdf2f2', borderBottom: '1px solid #f5c6c6', display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#555' }}>نوع الحيوان:</label>
+              <select value={productionReportType} onChange={e => setProductionReportType(e.target.value)} style={{ padding: '7px 12px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '13px' }}>
+                <option value="all">الكل</option>
+                {animalTypes.map(t => <option key={t} value={t}>{t === 'sheep' ? '🐑 ضان' : t === 'goat' ? '🐐 ماعز' : `🐄 ${t}`}</option>)}
+              </select>
+              <span style={{ fontSize: '13px', color: '#c0392b', fontWeight: 'bold' }}>📊 إجمالي الإناث: {productionReportData.length}</span>
+            </div>
+
+            {/* القائمة */}
+            <div style={{ padding: '15px 20px', maxHeight: '520px', overflowY: 'auto' }}>
+              {productionReportData.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '50px', color: '#999' }}>
+                  <div style={{ fontSize: '40px', marginBottom: '10px' }}>🐑</div>
+                  <div>لا توجد إناث مسجلة بهذا النوع</div>
+                </div>
+              ) : productionReportData.map((animal, index) => (
+                <div key={`${animal.type}-${animal.id}`} style={{ background: index === 0 ? '#fff5f5' : 'white', border: `2px solid ${index === 0 ? '#c0392b' : index < 3 ? '#f1948a' : '#eee'}`, borderRadius: '12px', padding: '16px', marginBottom: '12px' }}>
+
+                  {/* رأس البطاقة */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{ background: index === 0 ? '#c0392b' : index < 3 ? '#e74c3c' : '#bbb', color: 'white', borderRadius: '50%', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '13px', flexShrink: 0 }}>
+                        {index + 1}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 'bold', fontSize: '16px', color: '#3D2817' }}>
+                          رقم {animal.number}
+                          {index === 0 && <span style={{ marginRight: '6px', background: '#c0392b', color: 'white', fontSize: '11px', padding: '2px 7px', borderRadius: '4px' }}>🏆 الأفضل</span>}
+                          {index === 1 && <span style={{ marginRight: '6px', background: '#e67e22', color: 'white', fontSize: '11px', padding: '2px 7px', borderRadius: '4px' }}>🥈 ثاني</span>}
+                          {index === 2 && <span style={{ marginRight: '6px', background: '#f39c12', color: 'white', fontSize: '11px', padding: '2px 7px', borderRadius: '4px' }}>🥉 ثالث</span>}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
+                          {animal.type === 'sheep' ? '🐑 ضان' : animal.type === 'goat' ? '🐐 ماعز' : `🐄 ${animal.type}`}
+                          {' · '}عمرها: {animal.age.years > 0 ? `${animal.age.years} سنة` : ''}{animal.age.months > 0 ? ` و${animal.age.months} شهر` : ''}
+                          {' · '}دخلت المشروع: {new Date(animal.birthDate).toLocaleDateString('ar-SA')}
+                        </div>
+                      </div>
+                    </div>
+                    {/* الشارات */}
+                    <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                      {animal.healthStatus === 'sick' && <span style={{ background: '#fadbd8', color: '#c0392b', fontSize: '11px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold' }}>⚠️ مريضة</span>}
+                      {animal.status !== 'active' && animal.status !== 'productive' && <span style={{ background: '#fdebd0', color: '#e67e22', fontSize: '11px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold' }}>غير نشطة</span>}
+                      {animal.emptyYears.length > 0 && <span style={{ background: '#fef9e7', color: '#f39c12', fontSize: '11px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold' }}>⚠️ سنوات فارغة</span>}
+                      {animal.totalBirthEvents >= 3 && animal.emptyYears.length === 0 && <span style={{ background: '#d5f5e3', color: '#27ae60', fontSize: '11px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold' }}>✅ منتظمة</span>}
+                    </div>
+                  </div>
+
+                  {/* الإحصائيات */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '8px', marginBottom: '12px' }}>
+                    {[
+                      { label: 'مرات الولادة', val: animal.totalBirthEvents, color: '#c0392b', icon: '🐣' },
+                      { label: 'إجمالي المواليد', val: animal.totalBirths, color: '#8e44ad', icon: '🐑' },
+                      { label: 'معدل/سنة', val: animal.avgPerYear, color: '#2471a3', icon: '📊' },
+                      { label: 'سنوات فارغة', val: animal.emptyYears.length, color: animal.emptyYears.length > 0 ? '#e67e22' : '#27ae60', icon: '📅' },
+                    ].map(s => (
+                      <div key={s.label} style={{ background: '#f9f9f9', borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '18px', fontWeight: 'bold', color: s.color }}>{s.val}</div>
+                        <div style={{ fontSize: '11px', color: '#888' }}>{s.icon} {s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* سجل الولادات */}
+                  {animal.birthsList.length > 0 ? (
+                    <div style={{ background: '#f9f9f9', borderRadius: '8px', padding: '10px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', marginBottom: '6px' }}>📋 سجل الولادات:</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {animal.birthsList.map((b, i) => (
+                          <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 8px', background: 'white', borderRadius: '5px', border: '1px solid #eee' }}>
+                            <span style={{ color: '#555' }}>#{i + 1} — {new Date(b.date).toLocaleDateString('ar-SA')}</span>
+                            <span style={{ color: '#27ae60', fontWeight: 'bold' }}>{b.count} {b.count === 1 ? 'مولود' : 'مواليد'} {b.gender === 'male' ? '(ذكور)' : b.gender === 'female' ? '(إناث)' : '(مختلط)'}</span>
+                            {b.notes && <span style={{ color: '#888', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.notes}</span>}
+                          </div>
+                        ))}
+                      </div>
+                      {animal.emptyYears.length > 0 && (
+                        <div style={{ marginTop: '6px', fontSize: '11px', color: '#e67e22' }}>
+                          ⚠️ سنوات لم تنتج فيها: {animal.emptyYears.join('، ')}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ background: '#fef9e7', borderRadius: '8px', padding: '10px', fontSize: '12px', color: '#f39c12', textAlign: 'center' }}>
+                      لم يُسجَّل لها ولادات بعد — اضغط 🐣+ في الجدول لإضافة ولادة
+                    </div>
+                  )}
+
+                  {/* ملاحظات خاصة */}
+                  {(animal.healthNotes || animal.notes) && (
+                    <div style={{ marginTop: '8px', background: '#fff3cd', borderRadius: '6px', padding: '8px', fontSize: '12px', color: '#856404' }}>
+                      📝 {animal.healthNotes || animal.notes}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal تقرير الأرقام */}
       {showNumbersReport && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '20px', overflowY: 'auto' }} onClick={() => setShowNumbersReport(false)}>
