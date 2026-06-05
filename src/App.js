@@ -105,10 +105,44 @@ const App = () => {
   const [showProductionReport, setShowProductionReport] = useState(false);
   const [productionReportType, setProductionReportType] = useState('all');
   const [showSalesReport, setShowSalesReport] = useState(false);
-  const [salesReportTab, setSalesReportTab] = useState('sales'); // sales | profits
+  const [salesReportTab, setSalesReportTab] = useState('sales');
   const [salesReportType, setSalesReportType] = useState('all');
   const [salesDateFrom, setSalesDateFrom] = useState('');
   const [salesDateTo, setSalesDateTo] = useState(new Date().toISOString().split('T')[0]);
+
+  // ===== المكتبة البيطرية =====
+  const [showVetLibrary, setShowVetLibrary] = useState(false);
+  const [vetTab, setVetTab] = useState('inventory'); // inventory | treatments | experiences
+  // مخزون الأدوية
+  const [medicines, setMedicines] = useState(() => {
+    const saved = localStorage.getItem('vetMedicines');
+    return saved ? JSON.parse(saved) : [
+      { id: 'm1', name: 'تايلوزين', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
+      { id: 'm2', name: 'بي كمبلكس', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
+      { id: 'm3', name: 'أبو ثور (مضاد حيوي)', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
+      { id: 'm4', name: 'علاج الإسهال', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
+      { id: 'm5', name: 'فيتامينات', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
+      { id: 'm6', name: 'ملح معدني', boxes: 0, expiry: '', cost: 0, unit: 'كيس' },
+    ];
+  });
+  const [showAddMedicine, setShowAddMedicine] = useState(false);
+  const [editMedicineId, setEditMedicineId] = useState(null);
+  const [medicineForm, setMedicineForm] = useState({ name: '', boxes: '', expiry: '', cost: '', unit: 'علبة' });
+  // سجل العلاجات
+  const [treatmentRecords, setTreatmentRecords] = useState(() => {
+    const saved = localStorage.getItem('vetTreatments');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showAddTreatment, setShowAddTreatment] = useState(false);
+  const [treatmentForm, setTreatmentForm] = useState({ animalNumber: '', animalType: 'sheep', date: new Date().toISOString().split('T')[0], medicine: '', dose: '', notes: '', result: 'pending' });
+  // التجارب الناجحة
+  const [experiences, setExperiences] = useState(() => {
+    const saved = localStorage.getItem('vetExperiences');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showAddExperience, setShowAddExperience] = useState(false);
+  const [editExperienceId, setEditExperienceId] = useState(null);
+  const [experienceForm, setExperienceForm] = useState({ disease: '', symptoms: '', treatment: '', medicine: '', successRate: 90, notes: '' });
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -484,6 +518,91 @@ const App = () => {
     return { list: soldAnimals, totalSales, totalCost, totalProfit, withProfit };
   }, [animals, salesReportType, salesDateFrom, salesDateTo]);
 
+  // ===== دوال المكتبة البيطرية =====
+
+  // حفظ الأدوية في localStorage + Firebase
+  const saveMedicines = useCallback((updated) => {
+    setMedicines(updated);
+    localStorage.setItem('vetMedicines', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/vetMedicines`), updated).catch(() => {});
+  }, [user]);
+
+  const saveTreatments = useCallback((updated) => {
+    setTreatmentRecords(updated);
+    localStorage.setItem('vetTreatments', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/vetTreatments`), updated).catch(() => {});
+  }, [user]);
+
+  const saveExperiences = useCallback((updated) => {
+    setExperiences(updated);
+    localStorage.setItem('vetExperiences', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/vetExperiences`), updated).catch(() => {});
+  }, [user]);
+
+  // تحميل بيانات المكتبة من Firebase
+  useEffect(() => {
+    if (!user) return;
+    const vetRef = ref(database, `users/${user.id}/vetMedicines`);
+    onValue(vetRef, (snap) => { if (snap.exists()) { setMedicines(snap.val()); } }, { onlyOnce: true });
+    const treatRef = ref(database, `users/${user.id}/vetTreatments`);
+    onValue(treatRef, (snap) => { if (snap.exists()) { setTreatmentRecords(snap.val()); } }, { onlyOnce: true });
+    const expRef = ref(database, `users/${user.id}/vetExperiences`);
+    onValue(expRef, (snap) => { if (snap.exists()) { setExperiences(snap.val()); } }, { onlyOnce: true });
+  }, [user]);
+
+  // حساب الأيام المتبقية على انتهاء الدواء
+  const daysUntilExpiry = (expiryDate) => {
+    if (!expiryDate) return null;
+    const diff = new Date(expiryDate) - new Date();
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  };
+
+  const handleSaveMedicine = () => {
+    if (!medicineForm.name) { alert('أدخل اسم الدواء'); return; }
+    let updated;
+    if (editMedicineId) {
+      updated = medicines.map(m => m.id === editMedicineId ? { ...m, ...medicineForm, boxes: parseFloat(medicineForm.boxes) || 0, cost: parseFloat(medicineForm.cost) || 0 } : m);
+    } else {
+      const newMed = { id: `m_${Date.now()}`, ...medicineForm, boxes: parseFloat(medicineForm.boxes) || 0, cost: parseFloat(medicineForm.cost) || 0 };
+      updated = [...medicines, newMed];
+    }
+    saveMedicines(updated);
+    setMedicineForm({ name: '', boxes: '', expiry: '', cost: '', unit: 'علبة' });
+    setEditMedicineId(null);
+    setShowAddMedicine(false);
+  };
+
+  const handleDeleteMedicine = (id) => {
+    if (!window.confirm('حذف هذا الدواء؟')) return;
+    saveMedicines(medicines.filter(m => m.id !== id));
+  };
+
+  const handleSaveTreatment = () => {
+    if (!treatmentForm.animalNumber || !treatmentForm.medicine) { alert('أدخل رقم الحيوان والدواء'); return; }
+    const updated = [...treatmentRecords, { id: `t_${Date.now()}`, ...treatmentForm }];
+    saveTreatments(updated);
+    setTreatmentForm({ animalNumber: '', animalType: 'sheep', date: new Date().toISOString().split('T')[0], medicine: '', dose: '', notes: '', result: 'pending' });
+    setShowAddTreatment(false);
+  };
+
+  const handleSaveExperience = () => {
+    if (!experienceForm.disease || !experienceForm.treatment) { alert('أدخل المرض وطريقة العلاج'); return; }
+    let updated;
+    if (editExperienceId) {
+      updated = experiences.map(e => e.id === editExperienceId ? { ...e, ...experienceForm } : e);
+    } else {
+      updated = [...experiences, { id: `exp_${Date.now()}`, ...experienceForm }];
+    }
+    saveExperiences(updated);
+    setExperienceForm({ disease: '', symptoms: '', treatment: '', medicine: '', successRate: 90, notes: '' });
+    setEditExperienceId(null);
+    setShowAddExperience(false);
+  };
+
+  // إجمالي تكلفة المخزون
+  const totalInventoryCost = useMemo(() => medicines.reduce((s, m) => s + ((parseFloat(m.cost) || 0) * (parseFloat(m.boxes) || 0)), 0), [medicines]);
+  const expiringMedicines = useMemo(() => medicines.filter(m => { const d = daysUntilExpiry(m.expiry); return d !== null && d <= 90; }), [medicines]);
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -761,6 +880,7 @@ const App = () => {
             <button onClick={() => { setShowNumbersReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔢 تقرير الأرقام</button>
             <button onClick={() => { setShowProductionReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#c0392b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📈 تقرير الإنتاج</button>
             <button onClick={() => { setShowSalesReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#d4ac0d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>💰 المبيعات والأرباح</button>
+            <button onClick={() => { setShowVetLibrary(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🩺 المكتبة البيطرية</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -1214,6 +1334,330 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal المكتبة البيطرية ===== */}
+      {showVetLibrary && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowVetLibrary(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '750px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #117a65, #0e6655)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>🩺 المكتبة البيطرية</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>مخزون الأدوية · سجل العلاجات · التجارب الناجحة</p>
+              </div>
+              {expiringMedicines.length > 0 && (
+                <div style={{ background: '#e74c3c', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>
+                  ⚠️ {expiringMedicines.length} دواء ينتهي قريباً
+                </div>
+              )}
+            </div>
+
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f9f9f9' }}>
+              {[
+                { key: 'inventory', label: '💊 المخزون' },
+                { key: 'treatments', label: '📋 سجل العلاجات' },
+                { key: 'experiences', label: '🏆 التجارب الناجحة' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setVetTab(tab.key)} style={{ flex: 1, padding: '11px 5px', background: vetTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: vetTab === tab.key ? '3px solid #117a65' : '3px solid transparent', cursor: 'pointer', fontWeight: vetTab === tab.key ? 'bold' : 'normal', color: vetTab === tab.key ? '#117a65' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: '540px', overflowY: 'auto' }}>
+
+              {/* ===== تبويب المخزون ===== */}
+              {vetTab === 'inventory' && (
+                <div style={{ padding: '15px 20px' }}>
+                  {/* ملخص */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '10px', marginBottom: '15px' }}>
+                    {[
+                      { label: 'عدد الأدوية', val: medicines.length, color: '#117a65', icon: '💊' },
+                      { label: 'تنتهي قريباً', val: expiringMedicines.length, color: expiringMedicines.length > 0 ? '#e74c3c' : '#27ae60', icon: '⚠️' },
+                      { label: 'إجمالي التكلفة', val: totalInventoryCost.toLocaleString() + ' ر', color: '#d4ac0d', icon: '💰' },
+                    ].map(s => (
+                      <div key={s.label} style={{ background: '#f9f9f9', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #eee' }}>
+                        <div style={{ fontSize: '15px', fontWeight: 'bold', color: s.color }}>{s.icon} {s.val}</div>
+                        <div style={{ fontSize: '11px', color: '#888', marginTop: '3px' }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* قائمة الأدوية */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+                    {medicines.map(med => {
+                      const days = daysUntilExpiry(med.expiry);
+                      const isExpiring = days !== null && days <= 90;
+                      const isExpired = days !== null && days <= 0;
+                      const totalCost = (parseFloat(med.cost) || 0) * (parseFloat(med.boxes) || 0);
+                      return (
+                        <div key={med.id} style={{ background: isExpired ? '#fff0f0' : isExpiring ? '#fff8f0' : 'white', border: `1.5px solid ${isExpired ? '#e74c3c' : isExpiring ? '#e67e22' : '#eee'}`, borderRadius: '10px', padding: '12px 15px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                💊 {med.name}
+                                {isExpired && <span style={{ background: '#e74c3c', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>منتهي!</span>}
+                                {isExpiring && !isExpired && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>ينتهي قريباً</span>}
+                              </div>
+                              <div style={{ display: 'flex', gap: '14px', marginTop: '6px', flexWrap: 'wrap', fontSize: '12px', color: '#666' }}>
+                                <span>📦 الكمية: <strong>{med.boxes} {med.unit}</strong></span>
+                                <span>💵 تكلفة الوحدة: <strong>{med.cost} ر</strong></span>
+                                <span>🧾 الإجمالي: <strong style={{ color: '#117a65' }}>{totalCost.toLocaleString()} ر</strong></span>
+                                {med.expiry && (
+                                  <span style={{ color: isExpired ? '#e74c3c' : isExpiring ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>
+                                    📅 الانتهاء: {new Date(med.expiry).toLocaleDateString('ar-SA')}
+                                    {days !== null && ` (${isExpired ? 'منتهي منذ ' + Math.abs(days) + ' يوم' : 'باقي ' + days + ' يوم'})`}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button onClick={() => { setMedicineForm({ name: med.name, boxes: med.boxes, expiry: med.expiry || '', cost: med.cost, unit: med.unit || 'علبة' }); setEditMedicineId(med.id); setShowAddMedicine(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                              <button onClick={() => handleDeleteMedicine(med.id)} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* نموذج إضافة/تعديل دواء */}
+                  {showAddMedicine ? (
+                    <div style={{ background: '#f0f9f6', border: '2px solid #117a65', borderRadius: '10px', padding: '15px' }}>
+                      <h4 style={{ color: '#117a65', margin: '0 0 12px' }}>{editMedicineId ? '✏️ تعديل دواء' : '➕ إضافة دواء جديد'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم الدواء *</label>
+                          <input value={medicineForm.name} onChange={e => setMedicineForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: تايلوزين" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وحدة القياس</label>
+                          <select value={medicineForm.unit} onChange={e => setMedicineForm(p => ({ ...p, unit: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option>علبة</option><option>زجاجة</option><option>كيس</option><option>قارورة</option><option>حبة</option><option>لتر</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الكمية المتوفرة</label>
+                          <input type="number" min="0" value={medicineForm.boxes} onChange={e => setMedicineForm(p => ({ ...p, boxes: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>تكلفة الوحدة (ريال)</label>
+                          <input type="number" min="0" value={medicineForm.cost} onChange={e => setMedicineForm(p => ({ ...p, cost: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>تاريخ الانتهاء</label>
+                          <input type="date" value={medicineForm.expiry} onChange={e => setMedicineForm(p => ({ ...p, expiry: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveMedicine} style={{ background: '#117a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddMedicine(false); setEditMedicineId(null); setMedicineForm({ name: '', boxes: '', expiry: '', cost: '', unit: 'علبة' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddMedicine(true)} style={{ width: '100%', padding: '11px', background: '#117a65', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>➕ إضافة دواء جديد</button>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب سجل العلاجات ===== */}
+              {vetTab === 'treatments' && (
+                <div style={{ padding: '15px 20px' }}>
+                  {/* نموذج إضافة علاج */}
+                  {showAddTreatment ? (
+                    <div style={{ background: '#f0f4ff', border: '2px solid #2471a3', borderRadius: '10px', padding: '15px', marginBottom: '15px' }}>
+                      <h4 style={{ color: '#2471a3', margin: '0 0 12px' }}>➕ تسجيل علاج جديد</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>رقم الحيوان *</label>
+                          <input value={treatmentForm.animalNumber} onChange={e => setTreatmentForm(p => ({ ...p, animalNumber: e.target.value }))} placeholder="مثال: 1234" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع الحيوان</label>
+                          <select value={treatmentForm.animalType} onChange={e => setTreatmentForm(p => ({ ...p, animalType: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            {animalTypes.map(t => <option key={t} value={t}>{t === 'sheep' ? '🐑 ضان' : t === 'goat' ? '🐐 ماعز' : `🐄 ${t}`}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ العلاج</label>
+                          <input type="date" value={treatmentForm.date} onChange={e => setTreatmentForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💊 الدواء المستخدم *</label>
+                          <select value={treatmentForm.medicine} onChange={e => setTreatmentForm(p => ({ ...p, medicine: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="">اختر الدواء</option>
+                            {medicines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                            <option value="أخرى">أخرى</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الجرعة</label>
+                          <input value={treatmentForm.dose} onChange={e => setTreatmentForm(p => ({ ...p, dose: e.target.value }))} placeholder="مثال: 5ml يومياً" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نتيجة العلاج</label>
+                          <select value={treatmentForm.result} onChange={e => setTreatmentForm(p => ({ ...p, result: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="pending">⏳ جاري العلاج</option>
+                            <option value="success">✅ تعافى</option>
+                            <option value="failed">❌ لم يتعافَ</option>
+                            <option value="died">💀 نفق</option>
+                          </select>
+                        </div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات (وصف المرض، الأعراض)</label>
+                          <textarea value={treatmentForm.notes} onChange={e => setTreatmentForm(p => ({ ...p, notes: e.target.value }))} placeholder="مثال: إسهال مائي، ضعف عام، رفض الأكل..." rows={2} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} />
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveTreatment} style={{ background: '#2471a3', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => setShowAddTreatment(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddTreatment(true)} style={{ width: '100%', padding: '11px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '15px' }}>➕ تسجيل علاج جديد</button>
+                  )}
+
+                  {/* قائمة العلاجات */}
+                  {treatmentRecords.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>لا توجد سجلات علاج بعد</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {[...treatmentRecords].sort((a, b) => new Date(b.date) - new Date(a.date)).map(tr => {
+                        const resultColors = { success: '#27ae60', failed: '#e74c3c', died: '#7f8c8d', pending: '#e67e22' };
+                        const resultLabels = { success: '✅ تعافى', failed: '❌ لم يتعافَ', died: '💀 نفق', pending: '⏳ جاري' };
+                        return (
+                          <div key={tr.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '10px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a' }}>
+                                رقم {tr.animalNumber}
+                                <span style={{ marginRight: '8px', fontSize: '12px', color: '#888' }}>{tr.animalType === 'sheep' ? '🐑' : tr.animalType === 'goat' ? '🐐' : '🐄'}</span>
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#666', marginTop: '4px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                <span>📅 {new Date(tr.date).toLocaleDateString('ar-SA')}</span>
+                                <span>💊 {tr.medicine}</span>
+                                {tr.dose && <span>💉 {tr.dose}</span>}
+                              </div>
+                              {tr.notes && <div style={{ fontSize: '12px', color: '#888', marginTop: '4px', background: '#f9f9f9', padding: '4px 8px', borderRadius: '5px' }}>{tr.notes}</div>}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <span style={{ background: resultColors[tr.result] + '20', color: resultColors[tr.result], fontSize: '11px', padding: '3px 8px', borderRadius: '8px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>{resultLabels[tr.result]}</span>
+                              <button onClick={() => { if (window.confirm('حذف هذا السجل؟')) saveTreatments(treatmentRecords.filter(t => t.id !== tr.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب التجارب الناجحة ===== */}
+              {vetTab === 'experiences' && (
+                <div style={{ padding: '15px 20px' }}>
+                  {/* نموذج إضافة تجربة */}
+                  {showAddExperience ? (
+                    <div style={{ background: '#fffbf0', border: '2px solid #d4ac0d', borderRadius: '10px', padding: '15px', marginBottom: '15px' }}>
+                      <h4 style={{ color: '#b7950b', margin: '0 0 12px' }}>{editExperienceId ? '✏️ تعديل تجربة' : '➕ إضافة تجربة ناجحة'}</h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🦠 المرض أو الحالة *</label>
+                          <input value={experienceForm.disease} onChange={e => setExperienceForm(p => ({ ...p, disease: e.target.value }))} placeholder="مثال: إسهال مائي حاد، التهاب رئوي..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🔍 الأعراض</label>
+                          <textarea value={experienceForm.symptoms} onChange={e => setExperienceForm(p => ({ ...p, symptoms: e.target.value }))} placeholder="صف الأعراض التي لاحظتها..." rows={2} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💊 الدواء/الأدوية المستخدمة</label>
+                          <input value={experienceForm.medicine} onChange={e => setExperienceForm(p => ({ ...p, medicine: e.target.value }))} placeholder="مثال: تايلوزين + بي كمبلكس" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📋 طريقة العلاج *</label>
+                          <textarea value={experienceForm.treatment} onChange={e => setExperienceForm(p => ({ ...p, treatment: e.target.value }))} placeholder="اشرح طريقة العلاج بالتفصيل — الجرعة، المدة، التكرار..." rows={3} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>
+                            ⭐ نسبة النجاح: <span style={{ color: '#d4ac0d', fontSize: '14px' }}>{experienceForm.successRate}%</span>
+                          </label>
+                          <input type="range" min="10" max="100" step="5" value={experienceForm.successRate} onChange={e => setExperienceForm(p => ({ ...p, successRate: parseInt(e.target.value) }))} style={{ width: '100%', accentColor: '#d4ac0d' }} />
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#bbb' }}><span>10%</span><span>50%</span><span>100%</span></div>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات إضافية</label>
+                          <textarea value={experienceForm.notes} onChange={e => setExperienceForm(p => ({ ...p, notes: e.target.value }))} placeholder="أي تفاصيل إضافية مفيدة..." rows={2} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} />
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveExperience} style={{ background: '#d4ac0d', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddExperience(false); setEditExperienceId(null); setExperienceForm({ disease: '', symptoms: '', treatment: '', medicine: '', successRate: 90, notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddExperience(true)} style={{ width: '100%', padding: '11px', background: '#d4ac0d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '15px' }}>➕ إضافة تجربة ناجحة</button>
+                  )}
+
+                  {experiences.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>📖</div>
+                      <div>ابدأ بتوثيق تجاربك الناجحة — ستكون مرجعاً قيّماً</div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {[...experiences].sort((a, b) => b.successRate - a.successRate).map(exp => {
+                        const rateColor = exp.successRate >= 80 ? '#27ae60' : exp.successRate >= 60 ? '#e67e22' : '#e74c3c';
+                        return (
+                          <div key={exp.id} style={{ background: 'white', border: '1.5px solid #f0e68c', borderRadius: '12px', overflow: 'hidden' }}>
+                            {/* رأس التجربة */}
+                            <div style={{ background: '#fffbf0', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f0e68c' }}>
+                              <div>
+                                <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3D2817' }}>🦠 {exp.disease}</div>
+                                {exp.medicine && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>💊 {exp.medicine}</div>}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <div style={{ textAlign: 'center', background: rateColor + '20', border: `2px solid ${rateColor}`, borderRadius: '8px', padding: '4px 10px' }}>
+                                  <div style={{ fontSize: '16px', fontWeight: 'bold', color: rateColor }}>{exp.successRate}%</div>
+                                  <div style={{ fontSize: '10px', color: rateColor }}>نجاح</div>
+                                </div>
+                                <button onClick={() => { setExperienceForm({ disease: exp.disease, symptoms: exp.symptoms || '', treatment: exp.treatment, medicine: exp.medicine || '', successRate: exp.successRate, notes: exp.notes || '' }); setEditExperienceId(exp.id); setShowAddExperience(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
+                                <button onClick={() => { if (window.confirm('حذف هذه التجربة؟')) saveExperiences(experiences.filter(e => e.id !== exp.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                              </div>
+                            </div>
+                            {/* تفاصيل */}
+                            <div style={{ padding: '12px 15px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {exp.symptoms && (
+                                <div style={{ background: '#fef9e7', borderRadius: '6px', padding: '8px 10px' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#b7950b' }}>🔍 الأعراض: </span>
+                                  <span style={{ fontSize: '12px', color: '#555' }}>{exp.symptoms}</span>
+                                </div>
+                              )}
+                              <div style={{ background: '#f0f9f6', borderRadius: '6px', padding: '8px 10px' }}>
+                                <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#117a65' }}>📋 طريقة العلاج: </span>
+                                <span style={{ fontSize: '12px', color: '#555', whiteSpace: 'pre-wrap' }}>{exp.treatment}</span>
+                              </div>
+                              {exp.notes && (
+                                <div style={{ background: '#f4f6f7', borderRadius: '6px', padding: '8px 10px' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#666' }}>📝 ملاحظات: </span>
+                                  <span style={{ fontSize: '12px', color: '#555' }}>{exp.notes}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowVetLibrary(false)} style={{ width: '100%', background: '#117a65', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
