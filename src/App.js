@@ -183,7 +183,19 @@ const App = () => {
     price: '', notes: ''
   });
 
-  // ===== نظام الأعلاف =====
+  // ===== نظام الصيانة =====
+  const EMPTY_MAINT = { date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '' };
+  const [pumpMaintenance, setPumpMaintenance] = useState(() => { const s = localStorage.getItem('pumpMaintenance'); return s ? JSON.parse(s) : []; });
+  const [showAddPumpMaint, setShowAddPumpMaint] = useState(false);
+  const [pumpMaintPumpId, setPumpMaintPumpId] = useState(null);
+  const [pumpMaintForm, setPumpMaintForm] = useState(EMPTY_MAINT);
+  const [solarMaintenance, setSolarMaintenance] = useState(() => { const s = localStorage.getItem('solarMaintenance'); return s ? JSON.parse(s) : []; });
+  const [showAddSolarMaint, setShowAddSolarMaint] = useState(false);
+  const [solarMaintForm, setSolarMaintForm] = useState({ ...EMPTY_MAINT, system: 'battery' });
+  const [farmMaintenance, setFarmMaintenance] = useState(() => { const s = localStorage.getItem('farmMaintenance'); return s ? JSON.parse(s) : []; });
+  const [showAddFarmMaint, setShowAddFarmMaint] = useState(false);
+  const [farmMaintForm, setFarmMaintForm] = useState({ ...EMPTY_MAINT, area: '' });
+  const [showFarmMaintSystem, setShowFarmMaintSystem] = useState(false);
   const DEFAULT_FEEDS = [
     { id: 'f1', name: 'شعير', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 5 },
     { id: 'f2', name: 'برسيم', unit: 'كيس', unitWeight: 30, stock: 0, minAlert: 3 },
@@ -819,7 +831,91 @@ const App = () => {
     setShowAddPetrol(false);
   };
 
-  // حساب الأيام المتبقية من العمر الافتراضي
+  // ===== دوال الصيانة =====
+  const savePumpMaint = useCallback((updated) => {
+    setPumpMaintenance(updated);
+    localStorage.setItem('pumpMaintenance', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/pumpMaintenance`), updated).catch(() => {});
+  }, [user]);
+
+  const saveSolarMaint = useCallback((updated) => {
+    setSolarMaintenance(updated);
+    localStorage.setItem('solarMaintenance', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/solarMaintenance`), updated).catch(() => {});
+  }, [user]);
+
+  const saveFarmMaint = useCallback((updated) => {
+    setFarmMaintenance(updated);
+    localStorage.setItem('farmMaintenance', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/farmMaintenance`), updated).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/pumpMaintenance`), (snap) => { if (snap.exists()) setPumpMaintenance(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/solarMaintenance`), (snap) => { if (snap.exists()) setSolarMaintenance(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/farmMaintenance`), (snap) => { if (snap.exists()) setFarmMaintenance(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  // أيام حتى الصيانة القادمة
+  const daysUntilMaint = (nextDate) => {
+    if (!nextDate) return null;
+    return Math.ceil((new Date(nextDate) - new Date()) / 86400000);
+  };
+
+  const handleSavePumpMaint = () => {
+    if (!pumpMaintForm.title || !pumpMaintForm.date) { alert('أدخل العنوان والتاريخ'); return; }
+    const rec = { id: `pm_${Date.now()}`, pumpId: pumpMaintPumpId, ...pumpMaintForm, cost: parseFloat(pumpMaintForm.cost) || 0 };
+    savePumpMaint([...pumpMaintenance, rec]);
+    setPumpMaintForm({ date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '' });
+    setShowAddPumpMaint(false);
+    setPumpMaintPumpId(null);
+  };
+
+  const handleSaveSolarMaint = () => {
+    if (!solarMaintForm.title || !solarMaintForm.date) { alert('أدخل العنوان والتاريخ'); return; }
+    const rec = { id: `sm_${Date.now()}`, ...solarMaintForm, cost: parseFloat(solarMaintForm.cost) || 0 };
+    saveSolarMaint([...solarMaintenance, rec]);
+    setSolarMaintForm({ date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '', system: 'battery' });
+    setShowAddSolarMaint(false);
+  };
+
+  const handleSaveFarmMaint = () => {
+    if (!farmMaintForm.title || !farmMaintForm.date) { alert('أدخل العنوان والتاريخ'); return; }
+    const rec = { id: `fm_${Date.now()}`, ...farmMaintForm, cost: parseFloat(farmMaintForm.cost) || 0 };
+    saveFarmMaint([...farmMaintenance, rec]);
+    setFarmMaintForm({ date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '', area: '' });
+    setShowAddFarmMaint(false);
+  };
+
+  // مكوّن عرض سجل الصيانة (مشترك)
+  const MaintRecord = ({ rec, onDelete }) => {
+    const d = daysUntilMaint(rec.nextDate);
+    const isUrgent = d !== null && d <= 7;
+    return (
+      <div style={{ background: isUrgent ? '#fff8f0' : 'white', border: `1px solid ${isUrgent ? '#e67e22' : '#eee'}`, borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#1a1a1a', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            🔧 {rec.title}
+            {isUrgent && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '1px 6px', borderRadius: '4px' }}>صيانة قريبة!</span>}
+          </div>
+          <div style={{ fontSize: '11px', color: '#888', marginTop: '3px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <span>📅 {new Date(rec.date).toLocaleDateString('ar-SA')}</span>
+            {rec.technician && <span>👨‍🔧 {rec.technician}</span>}
+            {rec.area && <span>📍 {rec.area}</span>}
+            {rec.system && <span>⚙️ {rec.system === 'battery' ? 'بطارية' : rec.system === 'inverter' ? 'إنفرتر' : 'ألواح'}</span>}
+            {rec.nextDate && <span style={{ color: isUrgent ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>🔄 القادمة: {new Date(rec.nextDate).toLocaleDateString('ar-SA')}{d !== null ? ` (${d === 0 ? 'اليوم!' : `${d} يوم`})` : ''}</span>}
+          </div>
+          {rec.description && <div style={{ fontSize: '11px', color: '#666', marginTop: '3px', background: '#f9f9f9', padding: '4px 8px', borderRadius: '5px' }}>{rec.description}</div>}
+          {rec.notes && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>📝 {rec.notes}</div>}
+        </div>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          {rec.cost > 0 && <span style={{ fontWeight: 'bold', color: '#e74c3c', fontSize: '13px' }}>{rec.cost.toLocaleString()} ر</span>}
+          <button onClick={onDelete} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+        </div>
+      </div>
+    );
+  };
   const pumpRemainingDays = (purchaseDate, lifespan) => {
     if (!purchaseDate) return null;
     const elapsed = Math.floor((new Date() - new Date(purchaseDate)) / (1000 * 60 * 60 * 24));
@@ -1541,6 +1637,7 @@ const App = () => {
             <button onClick={() => { setShowSolarSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>☀️ الطاقة الشمسية</button>
             <button onClick={() => { setShowGasSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2e4057', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔵 مراقبة الغاز</button>
             <button onClick={() => { setShowWorkersSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#784212', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👷 إدارة العمال</button>
+            <button onClick={() => { setShowFarmMaintSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#515a5a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🏗️ صيانة المزرعة</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -1994,6 +2091,91 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal صيانة المزرعة ===== */}
+      {showFarmMaintSystem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowFarmMaintSystem(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '720px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: 'linear-gradient(135deg, #515a5a, #2e4057)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>🏗️ صيانة المزرعة والمرافق</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>الحظيرة · السياج · الخزانات · الطرق · المرافق العامة</p>
+              </div>
+              {farmMaintenance.some(r => { const d = daysUntilMaint(r.nextDate); return d !== null && d <= 14; }) && (
+                <div style={{ background: '#e74c3c', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>⚠️ صيانة قريبة</div>
+              )}
+            </div>
+
+            <div style={{ maxHeight: '580px', overflowY: 'auto', padding: '15px 20px' }}>
+              {/* ملخص */}
+              {farmMaintenance.length > 0 && (() => {
+                const total = farmMaintenance.reduce((s, r) => s + (r.cost || 0), 0);
+                const upcoming = farmMaintenance.filter(r => { const d = daysUntilMaint(r.nextDate); return d !== null && d <= 30; });
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginBottom: '14px' }}>
+                    <div style={{ background: '#f5f6fa', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #ddd' }}><div style={{ fontWeight: 'bold', color: '#515a5a', fontSize: '15px' }}>{farmMaintenance.length}</div><div style={{ fontSize: '11px', color: '#888' }}>سجل صيانة</div></div>
+                    <div style={{ background: '#fadbd8', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #f1948a' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '15px' }}>{total.toLocaleString()} ر</div><div style={{ fontSize: '11px', color: '#888' }}>إجمالي التكاليف</div></div>
+                    <div style={{ background: upcoming.length > 0 ? '#fff3e0' : '#d5f5e3', borderRadius: '8px', padding: '10px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: upcoming.length > 0 ? '#e67e22' : '#27ae60', fontSize: '15px' }}>{upcoming.length}</div><div style={{ fontSize: '11px', color: '#888' }}>قادمة خلال 30 يوم</div></div>
+                  </div>
+                );
+              })()}
+
+              {showAddFarmMaint ? (
+                <div style={{ background: '#f5f6fa', border: '2px solid #515a5a', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                  <h4 style={{ color: '#515a5a', margin: '0 0 12px' }}>🔧 تسجيل صيانة</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                    <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📍 المنطقة / المرفق</label>
+                      <select value={farmMaintForm.area} onChange={e => setFarmMaintForm(p => ({ ...p, area: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                        <option value="">— اختر —</option>
+                        <option value="حظيرة الغنم">🐑 حظيرة الغنم</option>
+                        <option value="حظيرة الماعز">🐐 حظيرة الماعز</option>
+                        <option value="السياج">🚧 السياج</option>
+                        <option value="خزان الماء">💧 خزان الماء</option>
+                        <option value="الطرق الداخلية">🛤️ الطرق الداخلية</option>
+                        <option value="غرفة الكهرباء">⚡ غرفة الكهرباء</option>
+                        <option value="المستودع">🏠 المستودع</option>
+                        <option value="أخرى">📌 أخرى</option>
+                      </select>
+                    </div>
+                    <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>عنوان الصيانة *</label><input value={farmMaintForm.title} onChange={e => setFarmMaintForm(p => ({ ...p, title: e.target.value }))} placeholder="مثال: إصلاح سياج، دهان حظيرة" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                    <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الصيانة *</label><input type="date" value={farmMaintForm.date} onChange={e => setFarmMaintForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                    <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 التكلفة (ريال)</label><input type="number" min="0" value={farmMaintForm.cost} onChange={e => setFarmMaintForm(p => ({ ...p, cost: e.target.value }))} placeholder="0" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                    <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>👨‍🔧 المقاول / الفني</label><input value={farmMaintForm.technician} onChange={e => setFarmMaintForm(p => ({ ...p, technician: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                    <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🔄 الصيانة القادمة</label><input type="date" value={farmMaintForm.nextDate} onChange={e => setFarmMaintForm(p => ({ ...p, nextDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                    <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 وصف العمل</label><textarea value={farmMaintForm.description} onChange={e => setFarmMaintForm(p => ({ ...p, description: e.target.value }))} placeholder="ما الذي تم عمله بالتفصيل..." rows={2} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} /></div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                    <button onClick={handleSaveFarmMaint} style={{ background: '#515a5a', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                    <button onClick={() => setShowAddFarmMaint(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setShowAddFarmMaint(true)} style={{ width: '100%', padding: '11px', background: '#515a5a', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>🔧 تسجيل صيانة جديدة</button>
+              )}
+
+              {/* السجل مجمّع حسب المنطقة */}
+              {[...new Set(farmMaintenance.map(r => r.area || 'أخرى'))].map(area => {
+                const recs = farmMaintenance.filter(r => (r.area || 'أخرى') === area).sort((a,b) => new Date(b.date)-new Date(a.date));
+                const areaTotal = recs.reduce((s, r) => s + (r.cost || 0), 0);
+                return (
+                  <div key={area} style={{ marginBottom: '14px' }}>
+                    <div style={{ fontWeight: 'bold', color: '#515a5a', fontSize: '13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{area}</span>
+                      {areaTotal > 0 && <span style={{ color: '#e74c3c', fontSize: '12px' }}>{areaTotal.toLocaleString()} ر</span>}
+                    </div>
+                    {recs.map(rec => <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) saveFarmMaint(farmMaintenance.filter(r => r.id !== rec.id)); }} />)}
+                  </div>
+                );
+              })}
+              {farmMaintenance.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🏗️</div><div>لا توجد سجلات صيانة بعد</div></div>}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowFarmMaintSystem(false)} style={{ width: '100%', background: '#515a5a', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
@@ -2629,6 +2811,7 @@ const App = () => {
                 { key: 'panels', label: '☀️ الألواح' },
                 { key: 'inverter', label: '⚡ الإنفرتر' },
                 { key: 'costs', label: '💰 التكاليف' },
+                { key: 'solarmaint', label: '🔧 الصيانة' },
               ].map(tab => (
                 <button key={tab.key} onClick={() => setSolarTab(tab.key)} style={{ flex: '0 0 auto', padding: '11px 16px', background: solarTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: solarTab === tab.key ? '3px solid #1a6b3c' : '3px solid transparent', cursor: 'pointer', fontWeight: solarTab === tab.key ? 'bold' : 'normal', color: solarTab === tab.key ? '#1a6b3c' : '#888', fontSize: isMobile ? '11px' : '13px', whiteSpace: 'nowrap' }}>
                   {tab.label}
@@ -2985,6 +3168,57 @@ const App = () => {
                       ✅ سجّل قراءة الفولت دورياً كمؤشر على صحة البطاريات
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* ===== تبويب صيانة الطاقة الشمسية ===== */}
+              {solarTab === 'solarmaint' && (
+                <div>
+                  {solarMaintenance.length > 0 && (() => {
+                    const total = solarMaintenance.reduce((s, r) => s + (r.cost || 0), 0);
+                    const upcoming = solarMaintenance.filter(r => { const d = daysUntilMaint(r.nextDate); return d !== null && d <= 30; });
+                    return (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginBottom: '14px' }}>
+                        <div style={{ background: '#f0fdf5', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #a9dfbf' }}><div style={{ fontWeight: 'bold', color: '#1a6b3c', fontSize: '15px' }}>{solarMaintenance.length}</div><div style={{ fontSize: '11px', color: '#888' }}>سجل صيانة</div></div>
+                        <div style={{ background: '#fadbd8', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #f1948a' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '15px' }}>{total.toLocaleString()} ر</div><div style={{ fontSize: '11px', color: '#888' }}>إجمالي التكاليف</div></div>
+                        <div style={{ background: upcoming.length > 0 ? '#fff3e0' : '#d5f5e3', borderRadius: '8px', padding: '10px', textAlign: 'center', border: `1px solid ${upcoming.length > 0 ? '#e67e22' : '#a9dfbf'}` }}><div style={{ fontWeight: 'bold', color: upcoming.length > 0 ? '#e67e22' : '#27ae60', fontSize: '15px' }}>{upcoming.length}</div><div style={{ fontSize: '11px', color: '#888' }}>قادمة خلال 30 يوم</div></div>
+                      </div>
+                    );
+                  })()}
+
+                  {showAddSolarMaint ? (
+                    <div style={{ background: '#f0fdf5', border: '2px solid #1a6b3c', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                      <h4 style={{ color: '#1a6b3c', margin: '0 0 12px' }}>🔧 تسجيل صيانة طاقة شمسية</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>النظام</label>
+                          <select value={solarMaintForm.system} onChange={e => setSolarMaintForm(p => ({ ...p, system: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="battery">🔋 بطارية</option>
+                            <option value="inverter">⚡ إنفرتر</option>
+                            <option value="panels">☀️ ألواح</option>
+                            <option value="wiring">🔌 أسلاك وتوصيلات</option>
+                            <option value="general">⚙️ عام</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>عنوان الصيانة *</label><input value={solarMaintForm.title} onChange={e => setSolarMaintForm(p => ({ ...p, title: e.target.value }))} placeholder="مثال: تبديل خلية، إصلاح إنفرتر" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الصيانة *</label><input type="date" value={solarMaintForm.date} onChange={e => setSolarMaintForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 التكلفة (ريال)</label><input type="number" min="0" value={solarMaintForm.cost} onChange={e => setSolarMaintForm(p => ({ ...p, cost: e.target.value }))} placeholder="0" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>👨‍🔧 الفني</label><input value={solarMaintForm.technician} onChange={e => setSolarMaintForm(p => ({ ...p, technician: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🔄 الصيانة القادمة</label><input type="date" value={solarMaintForm.nextDate} onChange={e => setSolarMaintForm(p => ({ ...p, nextDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 وصف العمل</label><textarea value={solarMaintForm.description} onChange={e => setSolarMaintForm(p => ({ ...p, description: e.target.value }))} placeholder="ما الذي تم عمله..." rows={2} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveSolarMaint} style={{ background: '#1a6b3c', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => setShowAddSolarMaint(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddSolarMaint(true)} style={{ width: '100%', padding: '11px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>🔧 تسجيل صيانة جديدة</button>
+                  )}
+
+                  {[...solarMaintenance].sort((a,b) => new Date(b.date)-new Date(a.date)).map(rec =>
+                    <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) saveSolarMaint(solarMaintenance.filter(r => r.id !== rec.id)); }} />
+                  )}
+                  {solarMaintenance.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🔧</div><div>لا توجد سجلات صيانة بعد</div></div>}
                 </div>
               )}
             </div>
@@ -3352,6 +3586,7 @@ const App = () => {
                 { key: 'spark', label: '⚡ البواجي' },
                 { key: 'brands', label: '⭐ تقييم الماركات' },
                 { key: 'petrol', label: '⛽ البنزين' },
+                { key: 'pumpmaint', label: '🔧 الصيانة' },
               ].map(tab => (
                 <button key={tab.key} onClick={() => setPumpTab(tab.key)} style={{ flex: 1, padding: '10px 4px', background: pumpTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: pumpTab === tab.key ? '3px solid #2c3e50' : '3px solid transparent', cursor: 'pointer', fontWeight: pumpTab === tab.key ? 'bold' : 'normal', color: pumpTab === tab.key ? '#1c2833' : '#888', fontSize: isMobile ? '10px' : '12px' }}>
                   {tab.label}
@@ -3905,6 +4140,76 @@ const App = () => {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ===== تبويب صيانة المواطير ===== */}
+              {pumpTab === 'pumpmaint' && (
+                <div>
+                  {/* ملخص تكاليف الصيانة */}
+                  {pumpMaintenance.length > 0 && (() => {
+                    const total = pumpMaintenance.reduce((s, r) => s + (r.cost || 0), 0);
+                    const upcoming = pumpMaintenance.filter(r => { const d = daysUntilMaint(r.nextDate); return d !== null && d <= 30; });
+                    return (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginBottom: '14px' }}>
+                        <div style={{ background: '#f5f6fa', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #ddd' }}><div style={{ fontWeight: 'bold', color: '#2c3e50', fontSize: '15px' }}>{pumpMaintenance.length}</div><div style={{ fontSize: '11px', color: '#888' }}>سجل صيانة</div></div>
+                        <div style={{ background: '#fadbd8', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #f1948a' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '15px' }}>{total.toLocaleString()} ر</div><div style={{ fontSize: '11px', color: '#888' }}>إجمالي التكاليف</div></div>
+                        <div style={{ background: upcoming.length > 0 ? '#fff3e0' : '#d5f5e3', borderRadius: '8px', padding: '10px', textAlign: 'center', border: `1px solid ${upcoming.length > 0 ? '#e67e22' : '#a9dfbf'}` }}><div style={{ fontWeight: 'bold', color: upcoming.length > 0 ? '#e67e22' : '#27ae60', fontSize: '15px' }}>{upcoming.length}</div><div style={{ fontSize: '11px', color: '#888' }}>قادمة خلال 30 يوم</div></div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* زر إضافة + اختيار الماطور */}
+                  {showAddPumpMaint ? (
+                    <div style={{ background: '#f5f6fa', border: '2px solid #2c3e50', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                      <h4 style={{ color: '#2c3e50', margin: '0 0 12px' }}>🔧 تسجيل صيانة ماطور</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الماطور</label>
+                          <select value={pumpMaintPumpId || ''} onChange={e => setPumpMaintPumpId(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="">— اختر —</option>
+                            {pumps.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            <option value="general">عام (كل المواطير)</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>عنوان الصيانة *</label><input value={pumpMaintForm.title} onChange={e => setPumpMaintForm(p => ({ ...p, title: e.target.value }))} placeholder="مثال: تغيير فلتر الهواء، إصلاح تسريب" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الصيانة *</label><input type="date" value={pumpMaintForm.date} onChange={e => setPumpMaintForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 التكلفة (ريال)</label><input type="number" min="0" value={pumpMaintForm.cost} onChange={e => setPumpMaintForm(p => ({ ...p, cost: e.target.value }))} placeholder="0" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>👨‍🔧 الفني / المورد</label><input value={pumpMaintForm.technician} onChange={e => setPumpMaintForm(p => ({ ...p, technician: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🔄 تاريخ الصيانة القادمة</label><input type="date" value={pumpMaintForm.nextDate} onChange={e => setPumpMaintForm(p => ({ ...p, nextDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 وصف العمل</label><textarea value={pumpMaintForm.description} onChange={e => setPumpMaintForm(p => ({ ...p, description: e.target.value }))} placeholder="ما الذي تم عمله بالتفصيل..." rows={2} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSavePumpMaint} style={{ background: '#2c3e50', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddPumpMaint(false); setPumpMaintForm({ date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddPumpMaint(true)} style={{ width: '100%', padding: '11px', background: '#2c3e50', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>🔧 تسجيل صيانة جديدة</button>
+                  )}
+
+                  {/* السجل مجمّع حسب الماطور */}
+                  {pumps.map(pump => {
+                    const recs = [...pumpMaintenance.filter(r => r.pumpId === pump.id)].sort((a, b) => new Date(b.date) - new Date(a.date));
+                    if (recs.length === 0) return null;
+                    const pumpTotal = recs.reduce((s, r) => s + (r.cost || 0), 0);
+                    return (
+                      <div key={pump.id} style={{ marginBottom: '14px' }}>
+                        <div style={{ fontWeight: 'bold', color: '#2c3e50', fontSize: '13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                          <span>⚙️ {pump.name}</span>
+                          <span style={{ color: '#e74c3c', fontSize: '12px' }}>{pumpTotal.toLocaleString()} ر</span>
+                        </div>
+                        {recs.map(rec => <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) savePumpMaint(pumpMaintenance.filter(r => r.id !== rec.id)); }} />)}
+                      </div>
+                    );
+                  })}
+                  {/* الصيانة العامة */}
+                  {pumpMaintenance.filter(r => r.pumpId === 'general').length > 0 && (
+                    <div style={{ marginBottom: '14px' }}>
+                      <div style={{ fontWeight: 'bold', color: '#2c3e50', fontSize: '13px', marginBottom: '6px' }}>⚙️ عام (كل المواطير)</div>
+                      {pumpMaintenance.filter(r => r.pumpId === 'general').sort((a,b) => new Date(b.date)-new Date(a.date)).map(rec => <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) savePumpMaint(pumpMaintenance.filter(r => r.id !== rec.id)); }} />)}
+                    </div>
+                  )}
+                  {pumpMaintenance.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🔧</div><div>لا توجد سجلات صيانة بعد</div></div>}
                 </div>
               )}
             </div>
