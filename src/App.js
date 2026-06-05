@@ -171,6 +171,32 @@ const App = () => {
   });
   const [showAddBrand, setShowAddBrand] = useState(false);
   const [brandForm, setBrandForm] = useState({ name: '', rating: 'good', review: '', price: '' });
+
+  // ===== نظام الأعلاف =====
+  const DEFAULT_FEEDS = [
+    { id: 'f1', name: 'شعير', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 5 },
+    { id: 'f2', name: 'برسيم', unit: 'كيس', unitWeight: 30, stock: 0, minAlert: 3 },
+    { id: 'f3', name: 'رودس', unit: 'كيس', unitWeight: 30, stock: 0, minAlert: 3 },
+    { id: 'f4', name: 'تبن', unit: 'ربطة', unitWeight: 10, stock: 0, minAlert: 5 },
+    { id: 'f5', name: 'مكعب وافي', unit: 'كيس', unitWeight: 40, stock: 0, minAlert: 3 },
+    { id: 'f6', name: 'مكعب فيدكو', unit: 'كيس', unitWeight: 40, stock: 0, minAlert: 3 },
+  ];
+  // استهلاك يومي افتراضي لكل نوع حيوان (كجم/حيوان/يوم)
+  const DEFAULT_CONSUMPTION = {
+    sheep: { شعير: 0.5, برسيم: 0.5, رودس: 0.5, تبن: 0, 'مكعب وافي': 0.5, 'مكعب فيدكو': 0 },
+    goat:  { شعير: 0.5, برسيم: 0.5, رودس: 0.5, تبن: 0, 'مكعب وافي': 0.5, 'مكعب فيدكو': 0 },
+  };
+  const [showFeedSystem, setShowFeedSystem] = useState(false);
+  const [feedTab, setFeedTab] = useState('stock'); // stock | purchases | consumption | forecast
+  const [feeds, setFeeds] = useState(() => { const s = localStorage.getItem('feedData'); return s ? JSON.parse(s) : DEFAULT_FEEDS; });
+  const [feedPurchases, setFeedPurchases] = useState(() => { const s = localStorage.getItem('feedPurchases'); return s ? JSON.parse(s) : []; });
+  const [feedConsumption, setFeedConsumption] = useState(() => { const s = localStorage.getItem('feedConsumption'); return s ? JSON.parse(s) : DEFAULT_CONSUMPTION; });
+  const [showAddFeed, setShowAddFeed] = useState(false);
+  const [editFeedId, setEditFeedId] = useState(null);
+  const [feedForm, setFeedForm] = useState({ name: '', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 3 });
+  const [showAddPurchase, setShowAddPurchase] = useState(false);
+  const [purchaseForm, setPurchaseForm] = useState({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '' });
+  const [editingConsumption, setEditingConsumption] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -721,6 +747,122 @@ const App = () => {
     setShowAddSpark(false);
   };
 
+  };
+
+  // ===== دوال الأعلاف =====
+  const saveFeeds = useCallback((updated) => {
+    setFeeds(updated);
+    localStorage.setItem('feedData', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/feeds`), updated).catch(() => {});
+  }, [user]);
+
+  const saveFeedPurchases = useCallback((updated) => {
+    setFeedPurchases(updated);
+    localStorage.setItem('feedPurchases', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/feedPurchases`), updated).catch(() => {});
+  }, [user]);
+
+  const saveFeedConsumption = useCallback((updated) => {
+    setFeedConsumption(updated);
+    localStorage.setItem('feedConsumption', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/feedConsumption`), updated).catch(() => {});
+  }, [user]);
+
+  // تحميل بيانات الأعلاف من Firebase
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/feeds`), (snap) => { if (snap.exists()) setFeeds(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/feedPurchases`), (snap) => { if (snap.exists()) setFeedPurchases(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/feedConsumption`), (snap) => { if (snap.exists()) setFeedConsumption(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  // حساب الاستهلاك اليومي الكلي لكل علف بناءً على عدد الحيوانات
+  const dailyConsumptionPerFeed = useMemo(() => {
+    const result = {};
+    feeds.forEach(feed => { result[feed.name] = 0; });
+    Object.entries(animals).forEach(([type, typeAnimals]) => {
+      if (!typeAnimals) return;
+      const activeCount = Object.values(typeAnimals).filter(a => a.status === 'active' || a.status === 'productive').length;
+      if (activeCount === 0) return;
+      const typeConsumption = feedConsumption[type] || {};
+      feeds.forEach(feed => {
+        const kgPerDay = parseFloat(typeConsumption[feed.name]) || 0;
+        result[feed.name] = (result[feed.name] || 0) + (kgPerDay * activeCount);
+      });
+    });
+    return result;
+  }, [animals, feeds, feedConsumption]);
+
+  // حساب عدد الحيوانات النشطة لكل نوع
+  const activeCountByType = useMemo(() => {
+    const result = {};
+    Object.entries(animals).forEach(([type, typeAnimals]) => {
+      if (!typeAnimals) return;
+      result[type] = Object.values(typeAnimals).filter(a => a.status === 'active' || a.status === 'productive').length;
+    });
+    return result;
+  }, [animals]);
+
+  // حساب آخر سعر شراء لكل علف
+  const lastPricePerFeed = useMemo(() => {
+    const result = {};
+    feedPurchases.forEach(p => {
+      const existing = result[p.feedId];
+      if (!existing || new Date(p.date) > new Date(existing.date)) {
+        result[p.feedId] = { price: parseFloat(p.pricePerUnit) || 0, date: p.date };
+      }
+    });
+    return result;
+  }, [feedPurchases]);
+
+  // التوقعات: كم يوم يكفي المخزون + تكاليف
+  const feedForecast = useMemo(() => {
+    return feeds.map(feed => {
+      const dailyKg = dailyConsumptionPerFeed[feed.name] || 0;
+      const stockKg = (parseFloat(feed.stock) || 0) * (parseFloat(feed.unitWeight) || 1);
+      const daysLeft = dailyKg > 0 ? Math.floor(stockKg / dailyKg) : null;
+      const lastPrice = lastPricePerFeed[feed.id];
+      const pricePerKg = lastPrice && feed.unitWeight ? lastPrice.price / feed.unitWeight : 0;
+      const dailyCost = dailyKg * pricePerKg;
+      const weeklyCost = dailyCost * 7;
+      const monthlyCost = dailyCost * 30;
+      const yearlyCost = dailyCost * 365;
+      const alert = daysLeft !== null && daysLeft <= (feed.minAlert * 7 || 21);
+      return { ...feed, dailyKg, stockKg, daysLeft, pricePerKg, dailyCost, weeklyCost, monthlyCost, yearlyCost, alert, lastPrice };
+    });
+  }, [feeds, dailyConsumptionPerFeed, lastPricePerFeed]);
+
+  const handleSaveFeed = () => {
+    if (!feedForm.name) { alert('أدخل اسم العلف'); return; }
+    let updated;
+    const feedData = { ...feedForm, unitWeight: parseFloat(feedForm.unitWeight) || 1, stock: parseFloat(feedForm.stock) || 0, minAlert: parseFloat(feedForm.minAlert) || 3 };
+    if (editFeedId) {
+      updated = feeds.map(f => f.id === editFeedId ? { ...f, ...feedData } : f);
+    } else {
+      updated = [...feeds, { id: `feed_${Date.now()}`, ...feedData }];
+    }
+    saveFeeds(updated);
+    setFeedForm({ name: '', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 3 });
+    setEditFeedId(null);
+    setShowAddFeed(false);
+  };
+
+  const handleSavePurchase = () => {
+    if (!purchaseForm.feedId || !purchaseForm.qty) { alert('اختر العلف وأدخل الكمية'); return; }
+    const feed = feeds.find(f => f.id === purchaseForm.feedId);
+    if (!feed) return;
+    const qty = parseFloat(purchaseForm.qty) || 0;
+    // تحديث المخزون
+    const updatedFeeds = feeds.map(f => f.id === purchaseForm.feedId ? { ...f, stock: (parseFloat(f.stock) || 0) + qty } : f);
+    saveFeeds(updatedFeeds);
+    // حفظ الشراء
+    const newPurchase = { id: `fp_${Date.now()}`, ...purchaseForm, qty, pricePerUnit: parseFloat(purchaseForm.pricePerUnit) || 0, totalCost: qty * (parseFloat(purchaseForm.pricePerUnit) || 0), feedName: feed.name };
+    saveFeedPurchases([...feedPurchases, newPurchase]);
+    setPurchaseForm({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '' });
+    setShowAddPurchase(false);
+    alert(`✓ تم تسجيل شراء ${qty} ${feed.unit} من ${feed.name}`);
+  };
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -1000,6 +1142,7 @@ const App = () => {
             <button onClick={() => { setShowSalesReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#d4ac0d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>💰 المبيعات والأرباح</button>
             <button onClick={() => { setShowVetLibrary(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🩺 المكتبة البيطرية</button>
             <button onClick={() => { setShowPumpSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1c2833', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>⚙️ مراقبة المواطير</button>
+            <button onClick={() => { setShowFeedSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6e4b1f', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🌾 إدارة الأعلاف</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -1453,6 +1596,338 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal إدارة الأعلاف ===== */}
+      {showFeedSystem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowFeedSystem(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '780px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #6e4b1f, #4a3010)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>🌾 إدارة الأعلاف</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>المخزون · المشتريات · الاستهلاك · التوقعات والتنبيهات</p>
+              </div>
+              {feedForecast.some(f => f.alert) && (
+                <div style={{ background: '#e74c3c', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>
+                  ⚠️ {feedForecast.filter(f => f.alert).length} علف ينفد قريباً
+                </div>
+              )}
+            </div>
+
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#faf8f5', overflowX: 'auto' }}>
+              {[
+                { key: 'stock', label: '📦 المخزون' },
+                { key: 'purchases', label: '🛒 المشتريات' },
+                { key: 'consumption', label: '⚙️ معدلات الاستهلاك' },
+                { key: 'forecast', label: '📊 التوقعات والتكاليف' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setFeedTab(tab.key)} style={{ flex: '0 0 auto', padding: '11px 14px', background: feedTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: feedTab === tab.key ? '3px solid #6e4b1f' : '3px solid transparent', cursor: 'pointer', fontWeight: feedTab === tab.key ? 'bold' : 'normal', color: feedTab === tab.key ? '#6e4b1f' : '#888', fontSize: isMobile ? '11px' : '12px', whiteSpace: 'nowrap' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: '580px', overflowY: 'auto', padding: '15px 20px' }}>
+
+              {/* ===== تبويب المخزون ===== */}
+              {feedTab === 'stock' && (
+                <div>
+                  {/* ملخص سريع */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '8px', marginBottom: '15px' }}>
+                    <div style={{ background: '#faf3e8', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #e8d5b0' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#6e4b1f' }}>{feeds.length}</div>
+                      <div style={{ fontSize: '11px', color: '#888' }}>🌾 أنواع الأعلاف</div>
+                    </div>
+                    <div style={{ background: '#fef9e7', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #f0e68c' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#d4ac0d' }}>{feedForecast.filter(f => f.alert).length}</div>
+                      <div style={{ fontSize: '11px', color: '#888' }}>⚠️ تنبيهات المخزون</div>
+                    </div>
+                    <div style={{ background: '#f0f9f6', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #a9dfbf' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#27ae60' }}>{feedPurchases.reduce((s, p) => s + p.totalCost, 0).toLocaleString()} ر</div>
+                      <div style={{ fontSize: '11px', color: '#888' }}>💰 إجمالي المشتريات</div>
+                    </div>
+                  </div>
+
+                  {/* قائمة الأعلاف */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+                    {feeds.map(feed => {
+                      const fc = feedForecast.find(f => f.id === feed.id);
+                      const isAlert = fc?.alert;
+                      const lastP = lastPricePerFeed[feed.id];
+                      return (
+                        <div key={feed.id} style={{ background: isAlert ? '#fff8f0' : 'white', border: `1.5px solid ${isAlert ? '#e67e22' : '#eee'}`, borderRadius: '10px', padding: '12px 15px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a3010', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                🌾 {feed.name}
+                                {isAlert && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>⚠️ ينفد قريباً</span>}
+                              </div>
+                              <div style={{ display: 'flex', gap: '14px', marginTop: '6px', flexWrap: 'wrap', fontSize: '12px', color: '#666' }}>
+                                <span>📦 المخزون: <strong>{feed.stock} {feed.unit}</strong> ({(parseFloat(feed.stock) * parseFloat(feed.unitWeight)).toFixed(0)} كجم)</span>
+                                <span>⚖️ وزن الوحدة: <strong>{feed.unitWeight} كجم</strong></span>
+                                {fc?.dailyKg > 0 && <span>🔥 استهلاك يومي: <strong>{fc.dailyKg.toFixed(1)} كجم</strong></span>}
+                                {fc?.daysLeft !== null && <span style={{ color: fc.daysLeft <= 7 ? '#e74c3c' : fc.daysLeft <= 21 ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>⏳ يكفي: <strong>{fc.daysLeft} يوم</strong></span>}
+                                {lastP && <span>💰 آخر سعر: <strong>{lastP.price} ر/{feed.unit}</strong></span>}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button onClick={() => { setFeedForm({ name: feed.name, unit: feed.unit, unitWeight: feed.unitWeight, stock: feed.stock, minAlert: feed.minAlert }); setEditFeedId(feed.id); setShowAddFeed(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                              <button onClick={() => { if (window.confirm(`حذف "${feed.name}"؟`)) saveFeeds(feeds.filter(f => f.id !== feed.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* نموذج إضافة/تعديل علف */}
+                  {showAddFeed ? (
+                    <div style={{ background: '#faf3e8', border: '2px solid #6e4b1f', borderRadius: '10px', padding: '15px' }}>
+                      <h4 style={{ color: '#6e4b1f', margin: '0 0 12px' }}>{editFeedId ? '✏️ تعديل علف' : '➕ إضافة علف جديد'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم العلف *</label><input value={feedForm.name} onChange={e => setFeedForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: ذرة صفراء" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وحدة القياس</label>
+                          <select value={feedForm.unit} onChange={e => setFeedForm(p => ({ ...p, unit: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option>كيس</option><option>ربطة</option><option>طن</option><option>كرتون</option><option>بالة</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وزن الوحدة (كجم)</label><input type="number" min="0.1" step="0.1" value={feedForm.unitWeight} onChange={e => setFeedForm(p => ({ ...p, unitWeight: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>المخزون الحالي ({feedForm.unit})</label><input type="number" min="0" value={feedForm.stock} onChange={e => setFeedForm(p => ({ ...p, stock: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>حد التنبيه المبكر ({feedForm.unit})</label><input type="number" min="1" value={feedForm.minAlert} onChange={e => setFeedForm(p => ({ ...p, minAlert: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveFeed} style={{ background: '#6e4b1f', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddFeed(false); setEditFeedId(null); setFeedForm({ name: '', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 3 }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddFeed(true)} style={{ width: '100%', padding: '11px', background: '#6e4b1f', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>➕ إضافة علف جديد</button>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب المشتريات ===== */}
+              {feedTab === 'purchases' && (
+                <div>
+                  {showAddPurchase ? (
+                    <div style={{ background: '#f0f9f6', border: '2px solid #27ae60', borderRadius: '10px', padding: '15px', marginBottom: '15px' }}>
+                      <h4 style={{ color: '#27ae60', margin: '0 0 12px' }}>🛒 تسجيل شراء علف</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع العلف *</label>
+                          <select value={purchaseForm.feedId} onChange={e => setPurchaseForm(p => ({ ...p, feedId: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="">— اختر —</option>
+                            {feeds.map(f => <option key={f.id} value={f.id}>{f.name} ({f.unit})</option>)}
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء</label><input type="date" value={purchaseForm.date} onChange={e => setPurchaseForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الكمية المشتراة ({purchaseForm.feedId ? feeds.find(f => f.id === purchaseForm.feedId)?.unit : 'وحدة'})</label><input type="number" min="0" step="0.5" value={purchaseForm.qty} onChange={e => setPurchaseForm(p => ({ ...p, qty: e.target.value }))} placeholder="مثال: 10" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر الوحدة (ريال)</label><input type="number" min="0" step="0.5" value={purchaseForm.pricePerUnit} onChange={e => setPurchaseForm(p => ({ ...p, pricePerUnit: e.target.value }))} placeholder="مثال: 45" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        {purchaseForm.qty && purchaseForm.pricePerUnit && (
+                          <div style={{ gridColumn: isMobile ? '1' : '1 / -1', background: '#d5f5e3', borderRadius: '6px', padding: '8px', textAlign: 'center', fontSize: '13px', fontWeight: 'bold', color: '#27ae60' }}>
+                            💵 الإجمالي: {(parseFloat(purchaseForm.qty) * parseFloat(purchaseForm.pricePerUnit)).toLocaleString()} ريال
+                          </div>
+                        )}
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>ملاحظات</label><input value={purchaseForm.notes} onChange={e => setPurchaseForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSavePurchase} style={{ background: '#27ae60', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ وتحديث المخزون</button>
+                        <button onClick={() => setShowAddPurchase(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddPurchase(true)} style={{ width: '100%', padding: '11px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '15px' }}>🛒 تسجيل شراء جديد</button>
+                  )}
+
+                  {/* سجل المشتريات */}
+                  {feedPurchases.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>لا توجد مشتريات مسجلة بعد</div>
+                  ) : (
+                    <>
+                      {/* ملخص حسب كل علف */}
+                      <div style={{ background: '#faf3e8', borderRadius: '10px', padding: '12px', marginBottom: '15px', border: '1px solid #e8d5b0' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#6e4b1f', marginBottom: '8px' }}>📊 إجمالي المشتريات حسب النوع</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                          {feeds.map(feed => {
+                            const feedBuys = feedPurchases.filter(p => p.feedId === feed.id);
+                            const totalQty = feedBuys.reduce((s, p) => s + p.qty, 0);
+                            const totalCost = feedBuys.reduce((s, p) => s + p.totalCost, 0);
+                            if (feedBuys.length === 0) return null;
+                            return (
+                              <div key={feed.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 8px', background: 'white', borderRadius: '6px' }}>
+                                <span style={{ fontWeight: 'bold', color: '#4a3010' }}>🌾 {feed.name}</span>
+                                <span style={{ color: '#666' }}>{totalQty} {feed.unit} ({feedBuys.length} مرة)</span>
+                                <span style={{ fontWeight: 'bold', color: '#27ae60' }}>{totalCost.toLocaleString()} ريال</span>
+                              </div>
+                            );
+                          })}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '6px 8px', background: '#6e4b1f', borderRadius: '6px', color: 'white', fontWeight: 'bold', marginTop: '4px' }}>
+                            <span>الإجمالي الكلي</span>
+                            <span>{feedPurchases.reduce((s, p) => s + p.totalCost, 0).toLocaleString()} ريال</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* قائمة المشتريات */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {[...feedPurchases].sort((a, b) => new Date(b.date) - new Date(a.date)).map(p => (
+                          <div key={p.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                            <div>
+                              <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010' }}>🌾 {p.feedName}</div>
+                              <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                <span>📅 {new Date(p.date).toLocaleDateString('ar-SA')}</span>
+                                <span>📦 {p.qty} {feeds.find(f => f.id === p.feedId)?.unit || ''}</span>
+                                <span>💰 {p.pricePerUnit} ر/وحدة</span>
+                                {p.notes && <span>📝 {p.notes}</span>}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '14px' }}>{p.totalCost.toLocaleString()} ر</span>
+                              <button onClick={() => { if (window.confirm('حذف هذا الشراء؟ سيتم خصم الكمية من المخزون')) { const feed = feeds.find(f => f.id === p.feedId); if (feed) saveFeeds(feeds.map(f => f.id === p.feedId ? { ...f, stock: Math.max(0, (parseFloat(f.stock) || 0) - p.qty) } : f)); saveFeedPurchases(feedPurchases.filter(x => x.id !== p.id)); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب معدلات الاستهلاك ===== */}
+              {feedTab === 'consumption' && (
+                <div>
+                  <div style={{ background: '#fef9e7', borderRadius: '10px', padding: '12px', marginBottom: '15px', border: '1px solid #f0e68c', fontSize: '13px', color: '#856404' }}>
+                    💡 حدد كم كجم يأكل الحيوان الواحد يومياً من كل نوع علف. الكمية صفر تعني أن هذا الحيوان لا يأكل هذا العلف.
+                  </div>
+
+                  {/* إجمالي الحيوانات النشطة */}
+                  <div style={{ background: '#f0f4ff', borderRadius: '8px', padding: '10px 14px', marginBottom: '15px', fontSize: '12px', color: '#2471a3', display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                    <strong>🐑 الحيوانات النشطة:</strong>
+                    {Object.entries(activeCountByType).map(([type, count]) => count > 0 && (
+                      <span key={type}>{type === 'sheep' ? '🐑 ضان' : type === 'goat' ? '🐐 ماعز' : `🐄 ${type}`}: <strong>{count}</strong></span>
+                    ))}
+                  </div>
+
+                  {Object.keys(animals).map(type => {
+                    const typeName = type === 'sheep' ? '🐑 ضان' : type === 'goat' ? '🐐 ماعز' : `🐄 ${type}`;
+                    const typeConsumption = feedConsumption[type] || {};
+                    return (
+                      <div key={type} style={{ background: 'white', border: '1px solid #eee', borderRadius: '10px', padding: '14px', marginBottom: '12px' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a3010', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          {typeName}
+                          <span style={{ fontSize: '12px', color: '#888', fontWeight: 'normal' }}>الحيوانات النشطة: {activeCountByType[type] || 0}</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3,1fr)', gap: '8px' }}>
+                          {feeds.map(feed => {
+                            const val = typeConsumption[feed.name] !== undefined ? typeConsumption[feed.name] : 0;
+                            const dailyTotal = val * (activeCountByType[type] || 0);
+                            return (
+                              <div key={feed.id} style={{ background: '#faf3e8', borderRadius: '8px', padding: '8px' }}>
+                                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#6e4b1f', marginBottom: '5px' }}>🌾 {feed.name}</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '4px' }}>
+                                  <input type="number" min="0" step="0.1" value={val} onChange={e => {
+                                    const newVal = parseFloat(e.target.value) || 0;
+                                    const updated = { ...feedConsumption, [type]: { ...(feedConsumption[type] || {}), [feed.name]: newVal } };
+                                    saveFeedConsumption(updated);
+                                  }} style={{ width: '70px', padding: '5px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '13px', fontWeight: 'bold' }} />
+                                  <span style={{ fontSize: '11px', color: '#888' }}>كجم/يوم</span>
+                                </div>
+                                {dailyTotal > 0 && <div style={{ fontSize: '10px', color: '#e67e22' }}>الإجمالي: {dailyTotal.toFixed(1)} كجم/يوم</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ===== تبويب التوقعات والتكاليف ===== */}
+              {feedTab === 'forecast' && (
+                <div>
+                  {/* الاستهلاك الكلي اليومي */}
+                  <div style={{ background: 'linear-gradient(135deg, #6e4b1f, #4a3010)', borderRadius: '10px', padding: '14px', marginBottom: '15px', color: 'white' }}>
+                    <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '10px', opacity: 0.9 }}>📊 الاستهلاك اليومي الكلي للمشروع</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '8px' }}>
+                      {feedForecast.filter(f => f.dailyKg > 0).map(f => (
+                        <div key={f.id} style={{ background: 'rgba(255,255,255,0.15)', borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{f.dailyKg.toFixed(1)} كجم</div>
+                          <div style={{ fontSize: '11px', opacity: 0.8 }}>🌾 {f.name}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* تنبيهات الأعلاف التي ستنفد */}
+                  {feedForecast.some(f => f.alert) && (
+                    <div style={{ background: '#fff3f3', border: '2px solid #e74c3c', borderRadius: '10px', padding: '12px', marginBottom: '15px' }}>
+                      <div style={{ fontWeight: 'bold', color: '#e74c3c', marginBottom: '8px', fontSize: '13px' }}>⚠️ تنبيه — أعلاف ستنفد قريباً</div>
+                      {feedForecast.filter(f => f.alert).map(f => (
+                        <div key={f.id} style={{ background: 'white', borderRadius: '6px', padding: '7px 10px', marginBottom: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                          <span style={{ fontWeight: 'bold', color: '#4a3010' }}>🌾 {f.name}</span>
+                          <span style={{ color: f.daysLeft <= 7 ? '#e74c3c' : '#e67e22', fontWeight: 'bold' }}>
+                            {f.daysLeft !== null ? `باقي ${f.daysLeft} يوم` : 'لا يوجد مخزون'}
+                          </span>
+                          <span style={{ color: '#888' }}>المخزون: {f.stock} {f.unit}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* تكاليف كل علف */}
+                  <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010', marginBottom: '10px' }}>💰 تحليل تكاليف الأعلاف</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+                    {feedForecast.map(f => {
+                      if (!f.dailyCost && !f.lastPrice) return null;
+                      return (
+                        <div key={f.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '10px', padding: '12px 15px' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a3010', marginBottom: '8px' }}>🌾 {f.name}</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '6px', fontSize: '12px' }}>
+                            {f.dailyCost > 0 && <>
+                              <div style={{ background: '#faf3e8', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#6e4b1f' }}>{f.dailyCost.toFixed(1)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>يومي</div></div>
+                              <div style={{ background: '#faf3e8', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e67e22' }}>{f.weeklyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>أسبوعي</div></div>
+                              <div style={{ background: '#faf3e8', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e74c3c' }}>{f.monthlyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>شهري</div></div>
+                              <div style={{ background: '#faf3e8', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#922b21' }}>{f.yearlyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>سنوي</div></div>
+                            </>}
+                            {f.daysLeft !== null && <div style={{ background: f.daysLeft <= 7 ? '#fadbd8' : f.daysLeft <= 21 ? '#fdebd0' : '#d5f5e3', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: f.daysLeft <= 7 ? '#e74c3c' : f.daysLeft <= 21 ? '#e67e22' : '#27ae60' }}>{f.daysLeft} يوم</div><div style={{ color: '#888', fontSize: '10px' }}>يكفي المخزون</div></div>}
+                          </div>
+                          {f.lastPrice && <div style={{ fontSize: '11px', color: '#888', marginTop: '6px' }}>آخر سعر: {f.lastPrice.price} ر/{f.unit} بتاريخ {new Date(f.lastPrice.date).toLocaleDateString('ar-SA')}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* إجمالي تكاليف الأعلاف */}
+                  {feedForecast.some(f => f.dailyCost > 0) && (
+                    <div style={{ background: 'linear-gradient(135deg, #27ae60, #1e8449)', borderRadius: '10px', padding: '14px', color: 'white' }}>
+                      <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '10px', opacity: 0.9 }}>💵 إجمالي تكاليف الأعلاف الكلية</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px' }}>
+                        {[
+                          { label: 'يومي', val: feedForecast.reduce((s, f) => s + f.dailyCost, 0).toFixed(1) },
+                          { label: 'أسبوعي', val: feedForecast.reduce((s, f) => s + f.weeklyCost, 0).toFixed(0) },
+                          { label: 'شهري', val: feedForecast.reduce((s, f) => s + f.monthlyCost, 0).toFixed(0) },
+                          { label: 'سنوي', val: feedForecast.reduce((s, f) => s + f.yearlyCost, 0).toFixed(0) },
+                        ].map(s => (
+                          <div key={s.label} style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '15px' }}>{parseFloat(s.val).toLocaleString()} ر</div>
+                            <div style={{ fontSize: '11px', opacity: 0.8 }}>{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowFeedSystem(false)} style={{ width: '100%', background: '#6e4b1f', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
