@@ -72,6 +72,8 @@ const App = () => {
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [showAddType, setShowAddType] = useState(false);
   const [newTypeName, setNewTypeName] = useState('');
+  const [editingType, setEditingType] = useState(null);
+  const [editTypeName, setEditTypeName] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -272,6 +274,38 @@ const App = () => {
     setTimeout(() => handleSelectAnimalType(newTypeName), 100);
   };
 
+  // حذف نوع حيوان
+  const handleDeleteType = (type) => {
+    const protectedTypes = ['sheep', 'goat'];
+    if (protectedTypes.includes(type)) return alert('لا يمكن حذف الضان أو الماعز');
+    if (!window.confirm(`هل تريد حذف نوع "${type}" وكل بياناته؟`)) return;
+    const updated = animalTypes.filter(t => t !== type);
+    setAnimalTypes(updated);
+    if (user) {
+      saveAnimalTypes(updated, user.id);
+      set(ref(database, `users/${user.id}/animals/${type}`), null)
+        .catch(err => console.error('Error deleting type:', err));
+    }
+  };
+
+  // تعديل اسم نوع حيوان
+  const handleRenameType = () => {
+    if (!editTypeName.trim()) return alert('أدخل الاسم الجديد');
+    if (animalTypes.includes(editTypeName.trim()) && editTypeName.trim() !== editingType) return alert('هذا الاسم موجود بالفعل');
+    const updated = animalTypes.map(t => t === editingType ? editTypeName.trim() : t);
+    setAnimalTypes(updated);
+    if (user) {
+      saveAnimalTypes(updated, user.id);
+      // نسخ البيانات للاسم الجديد وحذف القديم
+      const oldData = animals[editingType] || {};
+      set(ref(database, `users/${user.id}/animals/${editTypeName.trim()}`), oldData)
+        .then(() => set(ref(database, `users/${user.id}/animals/${editingType}`), null))
+        .catch(err => console.error('Error renaming type:', err));
+    }
+    setEditingType(null);
+    setEditTypeName('');
+  };
+
   // ✅ حذف مباشرة من Firebase
   const handleDeleteAnimal = (id) => {
     if (!window.confirm('هل تريد حذف هذا الحيوان؟')) return;
@@ -375,11 +409,46 @@ const App = () => {
           <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🐑 اختر نوع الحيوان</h1>
           <div style={{ display: 'grid', gridTemplateColumns: animalTypes.length > 2 ? '1fr 1fr' : '1fr', gap: '15px', marginBottom: '30px' }}>
             {animalTypes.map(type => (
-              <button key={type} onClick={() => handleSelectAnimalType(type)} style={{ padding: '30px 20px', background: getTypeColor(type), border: `3px solid ${getTypeTextColor(type)}`, borderRadius: '8px', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold', color: getTypeTextColor(type) }}>
-                {type === 'sheep' ? '🐑 ضان' : type === 'goat' ? '🐐 ماعز' : `🐄 ${type}`}
-              </button>
+              <div key={type} style={{ position: 'relative' }}>
+                {/* زر التعديل والحذف - يظهر فقط للأنواع غير الأساسية */}
+                {type !== 'sheep' && type !== 'goat' && (
+                  <div style={{ position: 'absolute', top: '5px', left: '5px', display: 'flex', gap: '4px', zIndex: 10 }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditingType(type); setEditTypeName(type); }}
+                      style={{ background: '#F5D547', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', padding: '3px 6px', fontWeight: 'bold' }}
+                      title="تعديل الاسم"
+                    >✏️</button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteType(type); }}
+                      style={{ background: '#e74c3c', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', padding: '3px 6px', color: 'white', fontWeight: 'bold' }}
+                      title="حذف النوع"
+                    >🗑️</button>
+                  </div>
+                )}
+                <button onClick={() => handleSelectAnimalType(type)} style={{ width: '100%', padding: '30px 20px', background: getTypeColor(type), border: `3px solid ${getTypeTextColor(type)}`, borderRadius: '8px', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold', color: getTypeTextColor(type) }}>
+                  {type === 'sheep' ? '🐑 ضان' : type === 'goat' ? '🐐 ماعز' : `🐄 ${type}`}
+                </button>
+              </div>
             ))}
           </div>
+
+          {/* Modal تعديل اسم النوع */}
+          {editingType && (
+            <div style={{ background: '#fff3cd', padding: '20px', borderRadius: '8px', marginBottom: '15px', border: '2px solid #F5D547' }}>
+              <p style={{ fontWeight: 'bold', marginBottom: '10px', color: '#3D2817' }}>✏️ تعديل اسم "{editingType}"</p>
+              <input
+                type="text"
+                value={editTypeName}
+                onChange={(e) => setEditTypeName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleRenameType()}
+                style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', marginBottom: '10px', fontSize: '14px' }}
+              />
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={handleRenameType} style={{ flex: 1, background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>حفظ</button>
+                <button onClick={() => { setEditingType(null); setEditTypeName(''); }} style={{ flex: 1, background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+              </div>
+            </div>
+          )}
           <button onClick={() => setShowAddType(true)} style={{ width: '100%', padding: '15px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '10px', fontSize: '14px' }}>
             ➕ إضافة نوع جديد
           </button>
