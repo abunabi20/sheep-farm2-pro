@@ -196,7 +196,6 @@ const App = () => {
   const [feedForm, setFeedForm] = useState({ name: '', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 3 });
   const [showAddPurchase, setShowAddPurchase] = useState(false);
   const [purchaseForm, setPurchaseForm] = useState({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '' });
-  const [editingConsumption, setEditingConsumption] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
