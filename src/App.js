@@ -2,6 +2,22 @@
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 
+// CSS للموبايل
+const mobileCSS = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }
+`;
+
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 // Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyDKVch1VTErpbv6RckVKpZC_ACWXld7ajM",
@@ -55,6 +71,8 @@ const EMPTY_FORM = {
 };
 
 const App = () => {
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [selectedAnimalType, setSelectedAnimalType] = useState(null);
   const [showDashboard, setShowDashboard] = useState(false);
@@ -485,48 +503,64 @@ const App = () => {
       freezer: allAnimals.filter(a => a.slaughterLocation === 'freezer').length,
     };
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh', background: '#f9f7f4' }}>
-        <style>{`* { margin: 0; padding: 0; box-sizing: border-box; } html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }`}</style>
-        <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', height: '100vh', overflowY: 'auto', position: 'fixed', width: '260px', left: 0, top: 0, zIndex: 100 }}>
-          <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>
-          <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '5px' }}>مرحباً {user.name}</p>
-          <button onClick={() => setShowDashboard(false)} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>← رجوع</button>
-          <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
-            <button onClick={() => setShowChangePassword(true)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
-            <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>تسجيل الخروج</button>
+      <div style={{ minHeight: '100vh', background: '#f9f7f4' }}>
+        <style>{mobileCSS}</style>
+
+        {/* شريط علوي للموبايل */}
+        {isMobile && (
+          <div style={{ background: 'linear-gradient(90deg, #5D4E37, #3D2817)', padding: '12px 15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 200 }}>
+            <span style={{ color: '#F5D547', fontWeight: 'bold', fontSize: '18px' }}>🐑 FarmHub</span>
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: 'none', border: '2px solid #F5D547', color: '#F5D547', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', fontSize: '18px' }}>☰</button>
           </div>
-        </div>
-        <div style={{ marginLeft: '260px', padding: '30px', overflowY: 'auto', height: '100vh' }}>
-          <h1 style={{ marginBottom: '20px', color: '#3D2817' }}>📊 ملخص الإحصائيات الشاملة</h1>
-          <div style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '30px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '15px' }}>
-            {[
-              { val: totalStats.total, label: '🐑 الإجمالي', color: '#3D2817' },
-              { val: totalStats.active, label: '✓ النشطة', color: '#27ae60' },
-              { val: totalStats.sick, label: '⚠️ المريضة', color: '#e74c3c' },
-              { val: totalStats.sold, label: '💰 المباع', color: '#3498db' },
-              { val: totalStats.freezer, label: '❄️ الثلاجة', color: '#2980b9' },
-            ].map(s => (
-              <div key={s.label} style={{ textAlign: 'center', padding: '15px', background: '#f9f7f4', borderRadius: '8px' }}>
-                <div style={{ fontSize: '24px', fontWeight: 'bold', color: s.color }}>{s.val}</div>
-                <div style={{ color: s.color, fontSize: '13px', marginTop: '5px' }}>{s.label}</div>
+        )}
+
+        <div style={{ display: 'flex', minHeight: isMobile ? 'calc(100vh - 50px)' : '100vh' }}>
+          {/* Sidebar */}
+          {(!isMobile || sidebarOpen) && (
+            <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', width: isMobile ? '100%' : '260px', minWidth: isMobile ? 'unset' : '260px', overflowY: 'auto', position: isMobile ? 'relative' : 'fixed', height: isMobile ? 'auto' : '100vh', top: 0, left: 0, zIndex: 100 }}>
+              {!isMobile && <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>}
+              <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '5px' }}>مرحباً {user.name}</p>
+              <button onClick={() => { setShowDashboard(false); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>← رجوع</button>
+              <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
+                <button onClick={() => setShowChangePassword(true)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
+                <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>تسجيل الخروج</button>
               </div>
-            ))}
-          </div>
-          <h2 style={{ marginBottom: '15px', color: '#3D2817' }}>📈 توزيع الحيوانات حسب النوع</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '15px' }}>
-            {Object.keys(animals).map(type => {
-              const ta = animals[type] || {};
-              return (
-                <div key={type} style={{ background: 'white', padding: '15px', borderRadius: '8px', border: '2px solid #ddd' }}>
-                  <h3 style={{ color: '#3D2817', marginBottom: '10px' }}>{type === 'sheep' ? '🐑 الضان' : type === 'goat' ? '🐐 الماعز' : `🐄 ${type}`}</h3>
-                  <div style={{ fontSize: '13px', lineHeight: '1.8', color: '#555' }}>
-                    <div>📊 الإجمالي: <strong>{Object.keys(ta).length}</strong></div>
-                    <div>✓ النشطة: <strong style={{ color: '#27ae60' }}>{Object.values(ta).filter(a => a.status === 'active').length}</strong></div>
-                    <div>⚠️ المريضة: <strong style={{ color: '#e74c3c' }}>{Object.values(ta).filter(a => a.healthStatus === 'sick').length}</strong></div>
-                  </div>
+            </div>
+          )}
+
+          {/* المحتوى */}
+          <div style={{ flex: 1, padding: isMobile ? '15px' : '30px', overflowY: 'auto', marginLeft: isMobile ? 0 : '260px' }}>
+            <h1 style={{ marginBottom: '20px', color: '#3D2817', fontSize: isMobile ? '18px' : '24px' }}>📊 ملخص الإحصائيات الشاملة</h1>
+            <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
+              {[
+                { val: totalStats.total, label: '🐑 الإجمالي', color: '#3D2817' },
+                { val: totalStats.active, label: '✓ النشطة', color: '#27ae60' },
+                { val: totalStats.sick, label: '⚠️ المريضة', color: '#e74c3c' },
+                { val: totalStats.sold, label: '💰 المباع', color: '#3498db' },
+                { val: totalStats.freezer, label: '❄️ الثلاجة', color: '#2980b9' },
+              ].map(s => (
+                <div key={s.label} style={{ textAlign: 'center', padding: '12px', background: '#f9f7f4', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '22px', fontWeight: 'bold', color: s.color }}>{s.val}</div>
+                  <div style={{ color: s.color, fontSize: '12px', marginTop: '4px' }}>{s.label}</div>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+            <h2 style={{ marginBottom: '15px', color: '#3D2817', fontSize: isMobile ? '15px' : '20px' }}>📈 توزيع الحيوانات حسب النوع</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(250px, 1fr))', gap: '15px' }}>
+              {Object.keys(animals).map(type => {
+                const ta = animals[type] || {};
+                return (
+                  <div key={type} style={{ background: 'white', padding: '15px', borderRadius: '8px', border: '2px solid #ddd' }}>
+                    <h3 style={{ color: '#3D2817', marginBottom: '10px' }}>{type === 'sheep' ? '🐑 الضان' : type === 'goat' ? '🐐 الماعز' : `🐄 ${type}`}</h3>
+                    <div style={{ fontSize: '13px', lineHeight: '1.8', color: '#555' }}>
+                      <div>📊 الإجمالي: <strong>{Object.keys(ta).length}</strong></div>
+                      <div>✓ النشطة: <strong style={{ color: '#27ae60' }}>{Object.values(ta).filter(a => a.status === 'active').length}</strong></div>
+                      <div>⚠️ المريضة: <strong style={{ color: '#e74c3c' }}>{Object.values(ta).filter(a => a.healthStatus === 'sick').length}</strong></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
@@ -535,93 +569,153 @@ const App = () => {
 
   // الصفحة الرئيسية
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh', background: '#f9f7f4' }}>
-      <style>{`* { margin: 0; padding: 0; box-sizing: border-box; } html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }`}</style>
+    <div style={{ minHeight: '100vh', background: '#f9f7f4' }}>
+      <style>{mobileCSS}</style>
 
-      {/* Sidebar */}
-      <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', height: '100vh', overflowY: 'auto', position: 'fixed', width: '260px', left: 0, top: 0, zIndex: 100 }}>
-        <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>
-        <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '5px' }}>مرحباً {user.name}</p>
-        <p style={{ color: '#F5D547', fontSize: '11px', textAlign: 'center', marginBottom: '10px', background: user.role === 'admin' ? '#8B6F47' : 'transparent', padding: '5px', borderRadius: '4px' }}>
-          {user.role === 'admin' ? '👑 مشرف' : '👤 مستخدم'}
-        </p>
-        <p style={{ color: '#E8D5C4', fontSize: '11px', textAlign: 'center', marginBottom: '20px', background: '#5D4E37', padding: '8px', borderRadius: '4px', fontWeight: 'bold' }}>
-          {selectedAnimalType === 'sheep' ? '🐑 الضان' : selectedAnimalType === 'goat' ? '🐐 الماعز' : selectedAnimalType}
-        </p>
-        <button onClick={() => setShowDashboard(true)} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📊 ملخص الإحصائيات</button>
-        <button onClick={() => setSelectedAnimalType(null)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
-        <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
-          <button onClick={() => setShowChangePassword(true)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
-          {user.role === 'admin' && (
-            <button onClick={() => setShowAdminPanel(true)} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👑 إدارة المستخدمين</button>
-          )}
-          <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '12px', fontWeight: '600' }}>تسجيل الخروج</button>
+      {/* شريط علوي للموبايل */}
+      {isMobile && (
+        <div style={{ background: 'linear-gradient(90deg, #5D4E37, #3D2817)', padding: '12px 15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 200 }}>
+          <span style={{ color: '#F5D547', fontWeight: 'bold', fontSize: '16px' }}>
+            🐑 {selectedAnimalType === 'sheep' ? 'الضان' : selectedAnimalType === 'goat' ? 'الماعز' : selectedAnimalType}
+          </span>
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: 'none', border: '2px solid #F5D547', color: '#F5D547', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', fontSize: '18px' }}>☰</button>
         </div>
-      </div>
+      )}
 
-      {/* المحتوى الرئيسي */}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, marginLeft: '260px', overflowY: 'auto', background: '#f9f7f4', padding: '30px' }}>
-        <h1 style={{ marginBottom: '20px', color: '#3D2817' }}>
-          {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
-        </h1>
+      <div style={{ display: 'flex', minHeight: isMobile ? 'calc(100vh - 50px)' : '100vh' }}>
 
-        {/* الإحصائيات */}
-        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold', color: '#3D2817', fontSize: '14px', lineHeight: '2', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-          <span>🐑 الإجمالي: {typeCount.total}</span>
-          <span style={{ color: '#27ae60' }}>✓ النشطة: {typeCount.active}</span>
-          <span style={{ color: '#e74c3c' }}>⚠️ المريضة: {typeCount.sick}</span>
-          <span style={{ color: '#3498db' }}>💰 المباع: {typeCount.sold}</span>
-          <span style={{ color: '#2980b9' }}>❄️ الثلاجة: {typeCount.freezer}</span>
-        </div>
+        {/* Sidebar */}
+        {(!isMobile || sidebarOpen) && (
+          <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', width: isMobile ? '100%' : '260px', minWidth: isMobile ? 'unset' : '260px', overflowY: 'auto', position: isMobile ? 'relative' : 'fixed', height: isMobile ? 'auto' : '100vh', top: 0, left: 0, zIndex: 100 }}>
+            {!isMobile && <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>}
+            <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '5px' }}>مرحباً {user.name}</p>
+            <p style={{ color: '#F5D547', fontSize: '11px', textAlign: 'center', marginBottom: '10px', background: user.role === 'admin' ? '#8B6F47' : 'transparent', padding: '5px', borderRadius: '4px' }}>
+              {user.role === 'admin' ? '👑 مشرف' : '👤 مستخدم'}
+            </p>
+            <p style={{ color: '#E8D5C4', fontSize: '11px', textAlign: 'center', marginBottom: '20px', background: '#5D4E37', padding: '8px', borderRadius: '4px', fontWeight: 'bold' }}>
+              {selectedAnimalType === 'sheep' ? '🐑 الضان' : selectedAnimalType === 'goat' ? '🐐 الماعز' : selectedAnimalType}
+            </p>
+            <button onClick={() => { setShowDashboard(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📊 ملخص الإحصائيات</button>
+            <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
+            <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
+              <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
+              {user.role === 'admin' && (
+                <button onClick={() => { setShowAdminPanel(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👑 إدارة المستخدمين</button>
+              )}
+              <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '12px', fontWeight: '600' }}>تسجيل الخروج</button>
+            </div>
+          </div>
+        )}
 
-        <button
-          onClick={() => { setAnimalForm(EMPTY_FORM); setEditingId(null); setShowModal(true); }}
-          style={{ marginBottom: '20px', background: '#8B6F47', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-        >
-          ➕ إضافة حيوان
-        </button>
+        {/* المحتوى الرئيسي */}
+        {(!isMobile || !sidebarOpen) && (
+          <div style={{ flex: 1, overflowY: 'auto', background: '#f9f7f4', padding: isMobile ? '15px' : '30px', marginLeft: isMobile ? 0 : '260px' }}>
+            <h1 style={{ marginBottom: '15px', color: '#3D2817', fontSize: isMobile ? '18px' : '24px' }}>
+              {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
+            </h1>
 
-        {/* الجدول */}
-        <div style={{ overflowX: 'auto', background: 'white', borderRadius: '8px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-            <thead>
-              <tr style={{ background: '#f0f0f0', borderBottom: '2px solid #ddd' }}>
-                {['الرقم', 'الجنس', 'العمر', 'الحالة', 'الصحة', 'ملاحظات', 'الإجراءات'].map(h => (
-                  <th key={h} style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedAnimals.map(animal => {
-                const notes = animal.healthNotes || animal.notes || '-';
-                return (
-                  <tr key={animal.id} style={{ borderBottom: '1px solid #eee', background: getTypeColor(selectedAnimalType) }}>
-                    <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(selectedAnimalType) }}>{animal.number}</td>
-                    <td style={{ padding: '10px' }}>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</td>
-                    <td style={{ padding: '10px' }}>{formatAge(animal.birthDate)}</td>
-                    <td style={{ padding: '10px', color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
-                      {animal.status === 'active' ? '✓ نشط' : animal.status === 'sold' ? '💰 مباع' : '🔪 مذبوح'}
-                    </td>
-                    <td style={{ padding: '10px', color: animal.healthStatus === 'healthy' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
-                      {animal.healthStatus === 'healthy' ? '✓ سليمة' : '⚠️ مريضة'}
-                    </td>
-                    <td style={{ padding: '10px', fontSize: '11px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }} title={notes}>
-                      {notes.length > 20 ? notes.substring(0, 20) + '...' : notes}
-                    </td>
-                    <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>
-                      <button onClick={() => { setSelectedAnimal(animal); setShowDetailModal(true); }} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>👁️</button>
-                      <button onClick={() => handleEditAnimal(animal.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>✏️</button>
-                      <button onClick={() => handleDeleteAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>🗑️</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {sortedAnimals.length === 0 && (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>لا توجد حيوانات مسجلة</div>
-          )}
-        </div>
+            {/* الإحصائيات */}
+            <div style={{ background: 'white', padding: '12px 15px', borderRadius: '8px', marginBottom: '15px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '8px', textAlign: 'center' }}>
+              {[
+                { val: typeCount.total, label: 'الإجمالي', icon: '🐑', color: '#3D2817' },
+                { val: typeCount.active, label: 'النشطة', icon: '✓', color: '#27ae60' },
+                { val: typeCount.sick, label: 'المريضة', icon: '⚠️', color: '#e74c3c' },
+                { val: typeCount.sold, label: 'المباع', icon: '💰', color: '#3498db' },
+                { val: typeCount.freezer, label: 'الثلاجة', icon: '❄️', color: '#2980b9' },
+              ].map(s => (
+                <div key={s.label} style={{ padding: '8px', background: '#f9f7f4', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '18px', fontWeight: 'bold', color: s.color }}>{s.val}</div>
+                  <div style={{ fontSize: '11px', color: s.color }}>{s.icon} {s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={() => { setAnimalForm(EMPTY_FORM); setEditingId(null); setShowModal(true); }}
+              style={{ marginBottom: '15px', background: '#8B6F47', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px', width: isMobile ? '100%' : 'auto' }}
+            >
+              ➕ إضافة حيوان
+            </button>
+
+            {/* الجدول - موبايل يعرض كاردات، ديسكتوب يعرض جدول */}
+            {isMobile ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {sortedAnimals.map(animal => {
+                  const notes = animal.healthNotes || animal.notes || '-';
+                  return (
+                    <div key={animal.id} style={{ background: 'white', borderRadius: '10px', padding: '15px', border: `2px solid ${getTypeTextColor(selectedAnimalType)}20`, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <span style={{ fontWeight: 'bold', fontSize: '16px', color: getTypeTextColor(selectedAnimalType) }}>#{animal.number}</span>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => { setSelectedAnimal(animal); setShowDetailModal(true); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>👁️</button>
+                          <button onClick={() => handleEditAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✏️</button>
+                          <button onClick={() => handleDeleteAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>🗑️</button>
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '13px' }}>
+                        <div><span style={{ color: '#999' }}>الجنس: </span>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</div>
+                        <div><span style={{ color: '#999' }}>العمر: </span>{formatAge(animal.birthDate)}</div>
+                        <div><span style={{ color: '#999' }}>الحالة: </span>
+                          <span style={{ color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
+                            {animal.status === 'active' ? '✓ نشط' : animal.status === 'sold' ? '💰 مباع' : '🔪 مذبوح'}
+                          </span>
+                        </div>
+                        <div><span style={{ color: '#999' }}>الصحة: </span>
+                          <span style={{ color: animal.healthStatus === 'healthy' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
+                            {animal.healthStatus === 'healthy' ? '✓ سليمة' : '⚠️ مريضة'}
+                          </span>
+                        </div>
+                      </div>
+                      {notes !== '-' && <div style={{ marginTop: '8px', fontSize: '12px', color: '#666', background: '#f9f7f4', padding: '6px', borderRadius: '4px' }}>{notes.length > 50 ? notes.substring(0, 50) + '...' : notes}</div>}
+                    </div>
+                  );
+                })}
+                {sortedAnimals.length === 0 && <div style={{ padding: '40px', textAlign: 'center', color: '#999', background: 'white', borderRadius: '8px' }}>لا توجد حيوانات مسجلة</div>}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto', background: 'white', borderRadius: '8px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ background: '#f0f0f0', borderBottom: '2px solid #ddd' }}>
+                      {['الرقم', 'الجنس', 'العمر', 'الحالة', 'الصحة', 'ملاحظات', 'الإجراءات'].map(h => (
+                        <th key={h} style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedAnimals.map(animal => {
+                      const notes = animal.healthNotes || animal.notes || '-';
+                      return (
+                        <tr key={animal.id} style={{ borderBottom: '1px solid #eee', background: getTypeColor(selectedAnimalType) }}>
+                          <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(selectedAnimalType) }}>{animal.number}</td>
+                          <td style={{ padding: '10px' }}>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</td>
+                          <td style={{ padding: '10px' }}>{formatAge(animal.birthDate)}</td>
+                          <td style={{ padding: '10px', color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
+                            {animal.status === 'active' ? '✓ نشط' : animal.status === 'sold' ? '💰 مباع' : '🔪 مذبوح'}
+                          </td>
+                          <td style={{ padding: '10px', color: animal.healthStatus === 'healthy' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
+                            {animal.healthStatus === 'healthy' ? '✓ سليمة' : '⚠️ مريضة'}
+                          </td>
+                          <td style={{ padding: '10px', fontSize: '11px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }} title={notes}>
+                            {notes.length > 20 ? notes.substring(0, 20) + '...' : notes}
+                          </td>
+                          <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>
+                            <button onClick={() => { setSelectedAnimal(animal); setShowDetailModal(true); }} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>👁️</button>
+                            <button onClick={() => handleEditAnimal(animal.id)} style={{ marginRight: '5px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>✏️</button>
+                            <button onClick={() => handleDeleteAnimal(animal.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>🗑️</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {sortedAnimals.length === 0 && (
+                  <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>لا توجد حيوانات مسجلة</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Modal التسجيل */}
