@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 // Firebase fallback with localStorage sync
 const getStorageKey = (userId, type) => `farm_${userId}_${type}`;
@@ -477,7 +477,7 @@ const App = () => {
         </div>
 
         {/* المحتوى */}
-        <div style={{ marginLeft: '260px', padding: '30px', overflowY: 'auto', maxHeight: '100vh' }}>
+        <div style={{ marginLeft: '260px', padding: '30px', overflowY: 'auto', height: '100vh', width: 'calc(100% - 260px)' }}>
           <h1 style={{ marginBottom: '20px', color: '#3D2817' }}>📊 ملخص الإحصائيات الشاملة</h1>
 
           {/* الإحصائيات العامة */}
@@ -844,23 +844,6 @@ const App = () => {
         </div>
       )}
 
-      {/* Modal تأكيد الحفظ */}
-      {showSaveConfirm && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000 }} onClick={() => setShowSaveConfirm(false)}>
-          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: '#3D2817', marginBottom: '20px', fontSize: '16px' }}>✓ تأكيد الحفظ</h2>
-            <p style={{ color: '#666', marginBottom: '25px', fontSize: '14px' }}>هل تريد حفظ التغييرات على الحيوان رقم {animalForm.number}؟</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-              <button onClick={handleAddAnimal} style={{ background: '#27ae60', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
-                نعم، احفظ
-              </button>
-              <button onClick={() => setShowSaveConfirm(false)} style={{ background: '#e74c3c', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal تغيير كلمة المرور */}
       {showChangePassword && (
@@ -914,3 +897,5 @@ const App = () => {
 };
 
 export default App;
+
+    
