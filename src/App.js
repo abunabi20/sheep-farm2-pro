@@ -1,6 +1,22 @@
-    import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getDatabase, ref, set, onValue } from 'firebase/database';
 
-// Firebase fallback with localStorage sync
+// Firebase Config
+const firebaseConfig = {
+  apiKey: "AIzaSyDKVch1VTErpbv6RckVKpZC_ACWXld7ajM",
+  authDomain: "sheep-farm2-pro.firebaseapp.com",
+  databaseURL: "https://sheep-farm2-pro-default-rtdb.firebaseio.com",
+  projectId: "sheep-farm2-pro",
+  storageBucket: "sheep-farm2-pro.appspot.com",
+  messagingSenderId: "610995382085",
+  appId: "1:610995382085:web:ede6bf321d4947e9f2002c"
+};
+
+const app = initializeApp(firebaseConfig);
+const database = getDatabase(app);
+
+// Helper function
 const getStorageKey = (userId, type) => `farm_${userId}_${type}`;
 
 const DEFAULT_ADMIN = {
@@ -98,10 +114,30 @@ const App = () => {
     }
   }, []);
 
+  // Firebase Real-time Listener
+  useEffect(() => {
+    if (user) {
+      const unsubscribe = onValue(ref(database, `users/${user.id}/animals`), (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          setAnimals(data);
+        }
+      }, (error) => {
+        console.log('Firebase listener error:', error);
+      });
+      
+      return () => unsubscribe();
+    }
+  }, [user]);
+
   // حفظ البيانات في localStorage عند التغيير
   useEffect(() => {
     if (user && selectedAnimalType && animals[selectedAnimalType]) {
-      localStorage.setItem(getStorageKey(user.id, selectedAnimalType), JSON.stringify(animals[selectedAnimalType]));
+      if (user && selectedAnimalType) {
+        localStorage.setItem(getStorageKey(user.id, selectedAnimalType), JSON.stringify(animals[selectedAnimalType]));
+        // Save to Firebase
+        set(ref(database, `users/${user.id}/animals/${selectedAnimalType}`), animals[selectedAnimalType] || {}).catch(err => console.log('Firebase save error:', err));
+      }
     }
   }, [animals, user, selectedAnimalType]);
 
@@ -298,9 +334,10 @@ const App = () => {
       const newAnimals = { ...prev };
       newAnimals[newTypeName] = {};
       
-      // حفظ في localStorage
+      // حفظ في localStorage و Firebase
       if (user) {
         localStorage.setItem(getStorageKey(user.id, newTypeName), JSON.stringify(newAnimals[newTypeName]));
+        set(ref(database, `users/${user.id}/animals/${newTypeName}`), newAnimals[newTypeName]).catch(err => console.log('Firebase save error:', err));
       }
       return newAnimals;
     });
@@ -897,5 +934,3 @@ const App = () => {
 };
 
 export default App;
-
-    
