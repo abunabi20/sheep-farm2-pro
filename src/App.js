@@ -747,8 +747,6 @@ const App = () => {
     setShowAddSpark(false);
   };
 
-  };
-
   // ===== دوال الأعلاف =====
   const saveFeeds = useCallback((updated) => {
     setFeeds(updated);
