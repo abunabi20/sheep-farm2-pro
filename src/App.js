@@ -95,6 +95,9 @@ const App = () => {
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showAgeReport, setShowAgeReport] = useState(false);
   const [ageReportFilter, setAgeReportFilter] = useState({ type: 'all', minYears: 5, minMonths: 0 });
+  const [showNumbersReport, setShowNumbersReport] = useState(false);
+  const [numbersReportType, setNumbersReportType] = useState('all');
+  const [numbersReportFilter, setNumbersReportFilter] = useState('all'); // all | active | sold | dead | reuse
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -344,6 +347,38 @@ const App = () => {
 
   // ✅ حفظ مباشرة في Firebase
   // ✅ حساب تقرير العجائز/العويد
+  // ✅ تقرير الأرقام
+  const numbersReportData = useMemo(() => {
+    const typesToSearch = numbersReportType === 'all' ? Object.keys(animals) : [numbersReportType];
+    let all = [];
+    typesToSearch.forEach(type => {
+      const typeAnimals = animals[type] || {};
+      Object.entries(typeAnimals).forEach(([id, data]) => {
+        all.push({ id, type, ...data });
+      });
+    });
+    all.sort((a, b) => parseInt(a.number) - parseInt(b.number));
+    return {
+      all,
+      active: all.filter(a => a.status === 'active' || a.status === 'productive'),
+      sold: all.filter(a => a.status === 'sold'),
+      dead: all.filter(a => a.status === 'slaughtered' || a.status === 'dead'),
+      reuse: all.filter(a => a.status === 'sold' || a.status === 'slaughtered' || a.status === 'dead'),
+    };
+  }, [animals, numbersReportType]);
+
+  // ✅ إعادة تفعيل حيوان
+  const handleReactivate = (animal) => {
+    if (!window.confirm(`إعادة تفعيل الرقم ${animal.number}؟\nسيتم تغيير حالته إلى نشط.`)) return;
+    const updatedAnimal = { ...animal, status: 'active', saleDate: '', salePrice: '', slaughterDate: '', slaughterNotes: '' };
+    delete updatedAnimal.id;
+    delete updatedAnimal.type;
+    delete updatedAnimal.totalMonths;
+    delete updatedAnimal.ageYears;
+    delete updatedAnimal.ageMonths;
+    saveAnimalToFirebase(user.id, animal.type, animal.id, updatedAnimal);
+  };
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -618,6 +653,7 @@ const App = () => {
             </p>
             <button onClick={() => { setShowDashboard(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📊 ملخص الإحصائيات</button>
             <button onClick={() => { setShowAgeReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👴 تقرير العويد</button>
+            <button onClick={() => { setShowNumbersReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔢 تقرير الأرقام</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -905,6 +941,120 @@ const App = () => {
           </div>
         </div>
       )}
+      {/* Modal تقرير الأرقام */}
+      {showNumbersReport && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '20px', overflowY: 'auto' }} onClick={() => setShowNumbersReport(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', maxWidth: '680px', width: '100%', marginTop: '20px', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #2471a3, #1a5276)', padding: '20px 25px', color: 'white' }}>
+              <h2 style={{ margin: 0, fontSize: '18px' }}>🔢 تقرير الأرقام</h2>
+              <p style={{ margin: '5px 0 0', fontSize: '12px', opacity: 0.85 }}>عرض كل الأرقام وإمكانية إعادة تفعيلها</p>
+            </div>
+
+            {/* فلاتر */}
+            <div style={{ padding: '15px 20px', background: '#f0f4f8', borderBottom: '1px solid #ddd' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '4px' }}>نوع الحيوان</label>
+                  <select value={numbersReportType} onChange={e => setNumbersReportType(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                    <option value="all">الكل</option>
+                    {animalTypes.map(t => <option key={t} value={t}>{t === 'sheep' ? '🐑 ضان' : t === 'goat' ? '🐐 ماعز' : `🐄 ${t}`}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '4px' }}>تصفية حسب الحالة</label>
+                  <select value={numbersReportFilter} onChange={e => setNumbersReportFilter(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                    <option value="all">الكل ({numbersReportData.all.length})</option>
+                    <option value="active">✅ الموجودة ({numbersReportData.active.length})</option>
+                    <option value="sold">💰 المباعة ({numbersReportData.sold.length})</option>
+                    <option value="dead">🔪 المذبوحة/الميتة ({numbersReportData.dead.length})</option>
+                    <option value="reuse">♻️ قابلة للإعادة ({numbersReportData.reuse.length})</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* ملخص سريع */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                {[
+                  { label: 'الكل', val: numbersReportData.all.length, color: '#2471a3', bg: '#d6eaf8' },
+                  { label: '✅ موجود', val: numbersReportData.active.length, color: '#27ae60', bg: '#d5f5e3' },
+                  { label: '💰 مباع', val: numbersReportData.sold.length, color: '#e67e22', bg: '#fdebd0' },
+                  { label: '🔪 ذُبح', val: numbersReportData.dead.length, color: '#e74c3c', bg: '#fadbd8' },
+                ].map(s => (
+                  <div key={s.label} style={{ background: s.bg, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: s.color }}>{s.val}</div>
+                    <div style={{ fontSize: '11px', color: s.color }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* القائمة */}
+            <div style={{ padding: '15px 20px', maxHeight: '420px', overflowY: 'auto' }}>
+              {(() => {
+                const list = numbersReportFilter === 'all' ? numbersReportData.all
+                  : numbersReportFilter === 'active' ? numbersReportData.active
+                  : numbersReportFilter === 'sold' ? numbersReportData.sold
+                  : numbersReportFilter === 'dead' ? numbersReportData.dead
+                  : numbersReportData.reuse;
+                if (list.length === 0) return (
+                  <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                    <div style={{ fontSize: '36px', marginBottom: '10px' }}>📭</div>
+                    <div>لا توجد أرقام في هذه الفئة</div>
+                  </div>
+                );
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {list.map(animal => {
+                      const isActive = animal.status === 'active' || animal.status === 'productive';
+                      const isSold = animal.status === 'sold';
+                      const isDead = animal.status === 'slaughtered' || animal.status === 'dead';
+                      const statusColor = isActive ? '#27ae60' : isSold ? '#e67e22' : '#e74c3c';
+                      const statusBg = isActive ? '#d5f5e3' : isSold ? '#fdebd0' : '#fadbd8';
+                      const statusLabel = isActive ? '✅ موجود' : isSold ? '💰 مباع' : '🔪 مذبوح/ميت';
+                      const canReuse = !isActive;
+                      return (
+                        <div key={`${animal.type}-${animal.id}`} style={{ background: 'white', border: '1px solid #e8e8e8', borderRadius: '10px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+                              <span style={{ fontWeight: 'bold', fontSize: '16px', color: '#1a5276' }}>#{animal.number}</span>
+                              <span style={{ fontSize: '11px', background: statusBg, color: statusColor, padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>{statusLabel}</span>
+                              <span style={{ fontSize: '11px', color: '#888' }}>{animal.type === 'sheep' ? '🐑 ضان' : animal.type === 'goat' ? '🐐 ماعز' : `🐄 ${animal.type}`}</span>
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#888', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                              <span>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</span>
+                              <span>📅 {formatAge(animal.birthDate)}</span>
+                              {isSold && animal.saleDate && <span>💰 بيع: {animal.saleDate}</span>}
+                              {isSold && animal.salePrice && <span>💵 {animal.salePrice} ريال</span>}
+                              {isDead && animal.slaughterDate && <span>📅 ذُبح: {animal.slaughterDate}</span>}
+                            </div>
+                          </div>
+                          {/* زر إعادة التفعيل */}
+                          {canReuse && (
+                            <button
+                              onClick={() => handleReactivate(animal)}
+                              style={{ background: '#27ae60', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 12px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', whiteSpace: 'nowrap', marginRight: '8px' }}
+                            >
+                              ♻️ إعادة تفعيل
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowNumbersReport(false)} style={{ width: '100%', background: '#2471a3', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal تقرير العويد */}
       {showAgeReport && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '20px', overflowY: 'auto' }} onClick={() => setShowAgeReport(false)}>
