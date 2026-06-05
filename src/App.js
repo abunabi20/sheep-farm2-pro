@@ -1,4 +1,4 @@
-    import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 
@@ -56,11 +56,10 @@ const calculateAge = (startDate) => {
 
 const formatAge = (startDate) => {
   const age = calculateAge(startDate);
-  if (age.years === 0 && age.months === 0) return 'جديد';
-  let result = '';
-  if (age.years > 0) result += `${age.years} سنة`;
-  if (age.months > 0) result += (result ? ' و ' : '') + `${age.months} شهر`;
-  return result;
+  if (age.years === 0 && age.months === 0) return 'جديد (أقل من شهر)';
+  if (age.years === 0) return `${age.months} شهر`;
+  if (age.months === 0) return `${age.years} سنة`;
+  return `${age.years} سنة و ${age.months} شهر`;
 };
 
 const EMPTY_FORM = {
@@ -888,5 +887,3 @@ const App = () => {
 };
 
 export default App;
-
-    
