@@ -172,6 +172,17 @@ const App = () => {
   const [showAddBrand, setShowAddBrand] = useState(false);
   const [brandForm, setBrandForm] = useState({ name: '', rating: 'good', review: '', price: '' });
 
+  // ===== تتبع البنزين =====
+  const [petrolRecords, setPetrolRecords] = useState(() => {
+    const s = localStorage.getItem('petrolRecords');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddPetrol, setShowAddPetrol] = useState(false);
+  const [petrolForm, setPetrolForm] = useState({
+    pumpId: '', date: new Date().toISOString().split('T')[0],
+    price: '', notes: ''
+  });
+
   // ===== نظام الأعلاف =====
   const DEFAULT_FEEDS = [
     { id: 'f1', name: 'شعير', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 5 },
@@ -728,6 +739,63 @@ const App = () => {
     onValue(ref(database, `users/${user.id}/pumps`), (snap) => { if (snap.exists()) setPumps(snap.val()); }, { onlyOnce: true });
     onValue(ref(database, `users/${user.id}/pumpBrands`), (snap) => { if (snap.exists()) setPumpBrands(snap.val()); }, { onlyOnce: true });
   }, [user]);
+
+  // ===== دوال البنزين =====
+  const savePetrolRecords = useCallback((updated) => {
+    setPetrolRecords(updated);
+    localStorage.setItem('petrolRecords', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/petrolRecords`), updated).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/petrolRecords`), (snap) => { if (snap.exists()) setPetrolRecords(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  const petrolStats = useMemo(() => {
+    // احسب لكل ماطور
+    return pumps.map(pump => {
+      const records = [...petrolRecords.filter(r => r.pumpId === pump.id)]
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+      if (records.length === 0) return { ...pump, records: [], avgDays: null, lastFill: null, daysLeft: null, totalSpent: 0, needsAlert: false };
+      const totalSpent = records.reduce((s, r) => s + (parseFloat(r.price) || 0), 0);
+      const lastFill = records[records.length - 1];
+      const daysSinceLast = Math.floor((new Date() - new Date(lastFill.date)) / 86400000);
+      let avgDays = null;
+      if (records.length >= 2) {
+        const gaps = [];
+        for (let i = 1; i < records.length; i++) {
+          const gap = Math.floor((new Date(records[i].date) - new Date(records[i-1].date)) / 86400000);
+          if (gap > 0) gaps.push(gap);
+        }
+        if (gaps.length > 0) avgDays = Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length);
+      }
+      const daysLeft = avgDays ? Math.max(0, avgDays - daysSinceLast) : null;
+      const alertDays = avgDays ? Math.round(avgDays * 0.25) : 3;
+      const needsAlert = daysLeft !== null && daysLeft <= alertDays;
+      const avgPrice = records.length > 0 ? totalSpent / records.length : 0;
+      const monthlyCost = avgDays ? (avgPrice / avgDays) * 30 : null;
+      const yearlyCost = avgDays ? (avgPrice / avgDays) * 365 : null;
+      const nextEstimate = avgDays ? new Date(new Date(lastFill.date).getTime() + avgDays * 86400000).toISOString().split('T')[0] : null;
+      const pct = avgDays && daysLeft !== null ? Math.round((daysLeft / avgDays) * 100) : null;
+      return { ...pump, records, avgDays, lastFill, daysSinceLast, daysLeft, totalSpent, needsAlert, alertDays, avgPrice, monthlyCost, yearlyCost, nextEstimate, pct };
+    });
+  }, [pumps, petrolRecords]);
+
+  const petrolTotalStats = useMemo(() => {
+    const total = petrolStats.reduce((s, p) => s + p.totalSpent, 0);
+    const monthly = petrolStats.reduce((s, p) => s + (p.monthlyCost || 0), 0);
+    const yearly = petrolStats.reduce((s, p) => s + (p.yearlyCost || 0), 0);
+    return { total, monthly, yearly };
+  }, [petrolStats]);
+
+  const handleSavePetrol = () => {
+    if (!petrolForm.pumpId || !petrolForm.date) { alert('اختر الماطور وأدخل التاريخ'); return; }
+    const newRecord = { id: `pet_${Date.now()}`, ...petrolForm, price: parseFloat(petrolForm.price) || 0 };
+    savePetrolRecords([...petrolRecords, newRecord]);
+    setPetrolForm({ pumpId: '', date: new Date().toISOString().split('T')[0], price: '', notes: '' });
+    setShowAddPetrol(false);
+  };
 
   // حساب الأيام المتبقية من العمر الافتراضي
   const pumpRemainingDays = (purchaseDate, lifespan) => {
@@ -2886,6 +2954,7 @@ const App = () => {
                 { key: 'oil', label: '🛢️ الزيت والصيانة' },
                 { key: 'spark', label: '⚡ البواجي' },
                 { key: 'brands', label: '⭐ تقييم الماركات' },
+                { key: 'petrol', label: '⛽ البنزين' },
               ].map(tab => (
                 <button key={tab.key} onClick={() => setPumpTab(tab.key)} style={{ flex: 1, padding: '10px 4px', background: pumpTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: pumpTab === tab.key ? '3px solid #2c3e50' : '3px solid transparent', cursor: 'pointer', fontWeight: pumpTab === tab.key ? 'bold' : 'normal', color: pumpTab === tab.key ? '#1c2833' : '#888', fontSize: isMobile ? '10px' : '12px' }}>
                   {tab.label}
@@ -3277,6 +3346,166 @@ const App = () => {
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب البنزين ===== */}
+              {pumpTab === 'petrol' && (
+                <div>
+                  {/* تنبيهات */}
+                  {petrolStats.some(p => p.needsAlert) && (
+                    <div style={{ background: '#fff3f3', border: '2px solid #e74c3c', borderRadius: '10px', padding: '10px 14px', marginBottom: '12px' }}>
+                      <div style={{ fontWeight: 'bold', color: '#e74c3c', fontSize: '13px', marginBottom: '5px' }}>⚠️ مواطير تحتاج تعبئة بنزين قريباً</div>
+                      {petrolStats.filter(p => p.needsAlert).map(p => (
+                        <div key={p.id} style={{ fontSize: '12px', color: '#555', marginBottom: '3px' }}>
+                          ⚙️ {p.name} — باقي تقريباً <strong style={{ color: '#e74c3c' }}>{p.daysLeft} يوم</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ملخص كلي */}
+                  {petrolRecords.length > 0 && (
+                    <div style={{ background: 'linear-gradient(135deg, #f39c12, #e67e22)', borderRadius: '10px', padding: '14px', marginBottom: '14px', color: 'white' }}>
+                      <div style={{ fontSize: '12px', opacity: 0.9, marginBottom: '8px' }}>⛽ إجمالي تكلفة البنزين — بنزين 95</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
+                        {[
+                          { label: 'إجمالي الإنفاق', val: petrolTotalStats.total.toLocaleString() + ' ر' },
+                          { label: 'شهري متوقع', val: petrolTotalStats.monthly.toFixed(0) + ' ر' },
+                          { label: 'سنوي متوقع', val: petrolTotalStats.yearly.toFixed(0) + ' ر' },
+                        ].map(s => (
+                          <div key={s.label} style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '15px' }}>{s.val}</div>
+                            <div style={{ fontSize: '10px', opacity: 0.85 }}>{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* بطاقة لكل ماطور */}
+                  {petrolStats.map(pump => {
+                    const barColor = pump.pct === null ? '#bbb' : pump.pct > 40 ? '#27ae60' : pump.pct > 20 ? '#e67e22' : '#e74c3c';
+                    const recentRecords = [...pump.records].sort((a,b) => new Date(b.date)-new Date(a.date)).slice(0,5);
+                    const prices = pump.records.map(r => parseFloat(r.price)||0).filter(p=>p>0);
+                    return (
+                      <div key={pump.id} style={{ background: pump.needsAlert ? '#fff8f0' : 'white', border: `1.5px solid ${pump.needsAlert ? '#e67e22' : '#eee'}`, borderRadius: '12px', padding: '14px', marginBottom: '12px' }}>
+                        {/* رأس */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1c2833', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              ⚙️ {pump.name}
+                              <span style={{ fontSize: '11px', background: '#fdebd0', color: '#e67e22', padding: '2px 6px', borderRadius: '5px' }}>⛽ بنزين 95</span>
+                              {pump.needsAlert && <span style={{ fontSize: '11px', background: '#e74c3c', color: 'white', padding: '2px 6px', borderRadius: '5px', fontWeight: 'bold' }}>تعبئة قريباً!</span>}
+                            </div>
+                            {pump.lastFill && (
+                              <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                <span>⛽ آخر تعبئة: {new Date(pump.lastFill.date).toLocaleDateString('ar-SA')} ({pump.daysSinceLast} يوم)</span>
+                                {pump.nextEstimate && <span style={{ color: pump.needsAlert ? '#e74c3c' : '#2c3e50', fontWeight: 'bold' }}>📅 القادمة: {new Date(pump.nextEstimate).toLocaleDateString('ar-SA')}</span>}
+                              </div>
+                            )}
+                          </div>
+                          <button onClick={() => { setPetrolForm({ pumpId: pump.id, date: new Date().toISOString().split('T')[0], price: '', notes: '' }); setShowAddPetrol(true); }} style={{ background: '#fdebd0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '6px', padding: '6px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>⛽ تعبئة</button>
+                        </div>
+
+                        {/* إحصائيات */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(90px,1fr))', gap: '7px', marginBottom: '10px' }}>
+                          <div style={{ background: '#f9f9f9', borderRadius: '7px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#2c3e50', fontSize: '14px' }}>{pump.records.length}</div><div style={{ fontSize: '10px', color: '#888' }}>تعبئة</div></div>
+                          <div style={{ background: '#f9f9f9', borderRadius: '7px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '14px' }}>{pump.avgDays ? `${pump.avgDays} ي` : '—'}</div><div style={{ fontSize: '10px', color: '#888' }}>متوسط الدورة</div></div>
+                          <div style={{ background: '#f9f9f9', borderRadius: '7px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '14px' }}>{pump.avgPrice ? `${pump.avgPrice.toFixed(0)} ر` : '—'}</div><div style={{ fontSize: '10px', color: '#888' }}>متوسط التعبئة</div></div>
+                          <div style={{ background: pump.needsAlert ? '#fff3e0' : '#f9f9f9', borderRadius: '7px', padding: '7px', textAlign: 'center', border: `1px solid ${barColor}` }}><div style={{ fontWeight: 'bold', color: barColor, fontSize: '14px' }}>{pump.daysLeft !== null ? `${pump.daysLeft} ي` : '—'}</div><div style={{ fontSize: '10px', color: '#888' }}>متبقي</div></div>
+                          {pump.monthlyCost && <div style={{ background: '#f9f9f9', borderRadius: '7px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '14px' }}>{pump.monthlyCost.toFixed(0)} ر</div><div style={{ fontSize: '10px', color: '#888' }}>شهري</div></div>}
+                          <div style={{ background: '#f9f9f9', borderRadius: '7px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#8e44ad', fontSize: '14px' }}>{pump.totalSpent.toLocaleString()} ر</div><div style={{ fontSize: '10px', color: '#888' }}>الإجمالي</div></div>
+                        </div>
+
+                        {/* شريط المتبقي */}
+                        {pump.pct !== null && (
+                          <div style={{ marginBottom: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#888', marginBottom: '3px' }}>
+                              <span>المتبقي التقريبي من الدورة</span>
+                              <span style={{ color: barColor, fontWeight: 'bold' }}>{pump.pct}%</span>
+                            </div>
+                            <div style={{ height: '8px', background: '#eee', borderRadius: '4px' }}>
+                              <div style={{ height: '100%', width: `${pump.pct}%`, background: barColor, borderRadius: '4px', transition: 'width 0.3s' }} />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* آخر 5 تعبئات */}
+                        {recentRecords.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#888', marginBottom: '5px', fontWeight: 'bold' }}>📋 آخر التعبئات:</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {recentRecords.map((r, i) => (
+                                <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: i === 0 ? '#fdebd0' : '#f9f9f9', borderRadius: '6px', padding: '5px 10px', fontSize: '12px' }}>
+                                  <span>{new Date(r.date).toLocaleDateString('ar-SA')}{r.notes ? ` — ${r.notes}` : ''}</span>
+                                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    {r.price > 0 && <span style={{ fontWeight: 'bold', color: '#e67e22' }}>{r.price} ر</span>}
+                                    <button onClick={() => { if (window.confirm('حذف؟')) savePetrolRecords(petrolRecords.filter(x => x.id !== r.id)); }} style={{ background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* رسم بياني للأسعار */}
+                        {prices.length >= 3 && (
+                          <div style={{ marginTop: '8px' }}>
+                            <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>📈 تطور أسعار التعبئة:</div>
+                            <div style={{ display: 'flex', gap: '2px', alignItems: 'flex-end', height: '35px' }}>
+                              {[...pump.records].sort((a,b)=>new Date(a.date)-new Date(b.date)).filter(r=>r.price>0).slice(-12).map((r,i,arr)=>{
+                                const maxP = Math.max(...arr.map(x=>x.price));
+                                const h = Math.round((r.price/maxP)*100);
+                                return <div key={r.id} title={`${new Date(r.date).toLocaleDateString('ar-SA')}: ${r.price} ر`} style={{ flex:1, height:`${h}%`, background: i===arr.length-1?'#e67e22':'#f0d0a0', borderRadius:'2px 2px 0 0', minHeight:'3px', cursor:'pointer' }} />;
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {pump.records.length === 0 && <div style={{ textAlign: 'center', color: '#bbb', fontSize: '13px', padding: '10px' }}>لا توجد تعبئات مسجلة — اضغط "⛽ تعبئة" لإضافة أول تعبئة</div>}
+                      </div>
+                    );
+                  })}
+
+                  {pumps.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>أضف مواطير أولاً من تبويب المواطير</div>}
+
+                  {/* Modal إضافة تعبئة بنزين */}
+                  {showAddPetrol && (
+                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddPetrol(false)}>
+                      <div style={{ background: 'white', borderRadius: '12px', maxWidth: '400px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ background: 'linear-gradient(135deg, #f39c12, #e67e22)', padding: '15px 20px', color: 'white' }}>
+                          <h3 style={{ margin: 0, fontSize: '16px' }}>⛽ تسجيل تعبئة بنزين 95</h3>
+                          <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.9 }}>{pumps.find(p => p.id === petrolForm.pumpId)?.name}</p>
+                        </div>
+                        <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الماطور</label>
+                            <select value={petrolForm.pumpId} onChange={e => setPetrolForm(p => ({ ...p, pumpId: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                              <option value="">— اختر —</option>
+                              {pumps.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ التعبئة</label>
+                            <input type="date" value={petrolForm.date} onChange={e => setPetrolForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 تكلفة التعبئة (ريال)</label>
+                            <input type="number" min="0" step="0.5" value={petrolForm.price} onChange={e => setPetrolForm(p => ({ ...p, price: e.target.value }))} placeholder="مثال: 150" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label>
+                            <input value={petrolForm.notes} onChange={e => setPetrolForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '5px' }}>
+                            <button onClick={handleSavePetrol} style={{ background: '#e67e22', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>✓ حفظ</button>
+                            <button onClick={() => setShowAddPetrol(false)} style={{ background: '#ddd', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إلغاء</button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
