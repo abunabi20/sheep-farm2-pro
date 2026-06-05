@@ -65,6 +65,7 @@ const formatAge = (startDate) => {
 const EMPTY_FORM = {
   number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0],
   status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '',
+  purchasePrice: '', purchaseDate: '',
   saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular',
   slaughterLocation: '', slaughterNotes: '', deathDate: ''
 };
@@ -103,6 +104,11 @@ const App = () => {
   const [birthForm, setBirthForm] = useState({ date: new Date().toISOString().split('T')[0], count: 1, gender: 'mixed', notes: '' });
   const [showProductionReport, setShowProductionReport] = useState(false);
   const [productionReportType, setProductionReportType] = useState('all');
+  const [showSalesReport, setShowSalesReport] = useState(false);
+  const [salesReportTab, setSalesReportTab] = useState('sales'); // sales | profits
+  const [salesReportType, setSalesReportType] = useState('all');
+  const [salesDateFrom, setSalesDateFrom] = useState('');
+  const [salesDateTo, setSalesDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -450,6 +456,34 @@ const App = () => {
     return result.sort((a, b) => b.score - a.score);
   }, [animals, productionReportType]);
 
+  // ✅ تقرير المبيعات والأرباح
+  const salesReportData = useMemo(() => {
+    const typesToSearch = salesReportType === 'all' ? Object.keys(animals) : [salesReportType];
+    let soldAnimals = [];
+    typesToSearch.forEach(type => {
+      const typeAnimals = animals[type] || {};
+      Object.entries(typeAnimals).forEach(([id, data]) => {
+        if (data.status === 'sold' && data.saleDate) {
+          // فلترة بالتاريخ
+          if (salesDateFrom && data.saleDate < salesDateFrom) return;
+          if (salesDateTo && data.saleDate > salesDateTo) return;
+          soldAnimals.push({
+            id, type, ...data,
+            salePriceNum: parseFloat(data.salePrice) || 0,
+            purchasePriceNum: parseFloat(data.purchasePrice) || 0,
+            profit: (parseFloat(data.salePrice) || 0) - (parseFloat(data.purchasePrice) || 0),
+          });
+        }
+      });
+    });
+    soldAnimals.sort((a, b) => new Date(b.saleDate) - new Date(a.saleDate));
+    const totalSales = soldAnimals.reduce((s, a) => s + a.salePriceNum, 0);
+    const totalCost = soldAnimals.reduce((s, a) => s + a.purchasePriceNum, 0);
+    const totalProfit = totalSales - totalCost;
+    const withProfit = soldAnimals.filter(a => a.purchasePriceNum > 0);
+    return { list: soldAnimals, totalSales, totalCost, totalProfit, withProfit };
+  }, [animals, salesReportType, salesDateFrom, salesDateTo]);
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -726,6 +760,7 @@ const App = () => {
             <button onClick={() => { setShowAgeReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👴 تقرير العويد</button>
             <button onClick={() => { setShowNumbersReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔢 تقرير الأرقام</button>
             <button onClick={() => { setShowProductionReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#c0392b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📈 تقرير الإنتاج</button>
+            <button onClick={() => { setShowSalesReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#d4ac0d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>💰 المبيعات والأرباح</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -876,6 +911,17 @@ const App = () => {
               <div>
                 <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>تاريخ الميلاد *</label>
                 <input type="date" value={animalForm.birthDate} onChange={(e) => handleAnimalChange('birthDate', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} required />
+              </div>
+              {/* سعر الشراء وتاريخه */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', background: '#f0f9f3', padding: '12px', borderRadius: '8px', border: '1px solid #c8e6c9' }}>
+                <div>
+                  <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>💰 سعر الشراء (ريال)</label>
+                  <input type="number" min="0" placeholder="اختياري" value={animalForm.purchasePrice} onChange={(e) => handleAnimalChange('purchasePrice', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>📅 تاريخ الشراء</label>
+                  <input type="date" value={animalForm.purchaseDate} onChange={(e) => handleAnimalChange('purchaseDate', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+                </div>
               </div>
               {animalForm.gender === 'female' && (
                 <div>
@@ -1168,6 +1214,158 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal المبيعات والأرباح */}
+      {showSalesReport && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '20px', overflowY: 'auto' }} onClick={() => setShowSalesReport(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', maxWidth: '720px', width: '100%', marginTop: '20px', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #d4ac0d, #b7950b)', padding: '20px 25px', color: 'white' }}>
+              <h2 style={{ margin: 0, fontSize: '18px' }}>💰 المبيعات والأرباح</h2>
+              <p style={{ margin: '5px 0 0', fontSize: '12px', opacity: 0.9 }}>تتبع مبيعاتك وأرباحك في أي فترة زمنية</p>
+            </div>
+
+            {/* التبويبان */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee' }}>
+              {[
+                { key: 'sales', label: '📋 تقرير المبيعات' },
+                { key: 'profits', label: '📊 تقرير الأرباح' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setSalesReportTab(tab.key)} style={{ flex: 1, padding: '13px', background: salesReportTab === tab.key ? '#fef9e7' : 'white', border: 'none', borderBottom: salesReportTab === tab.key ? '3px solid #d4ac0d' : '3px solid transparent', cursor: 'pointer', fontWeight: salesReportTab === tab.key ? 'bold' : 'normal', color: salesReportTab === tab.key ? '#b7950b' : '#666', fontSize: '13px', transition: 'all 0.2s' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* الفلاتر */}
+            <div style={{ padding: '15px 20px', background: '#fef9e7', borderBottom: '1px solid #f9e79f' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '10px', alignItems: 'end' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '4px' }}>نوع الحيوان</label>
+                  <select value={salesReportType} onChange={e => setSalesReportType(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                    <option value="all">الكل</option>
+                    {animalTypes.map(t => <option key={t} value={t}>{t === 'sheep' ? '🐑 ضان' : t === 'goat' ? '🐐 ماعز' : `🐄 ${t}`}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '4px' }}>📅 من تاريخ</label>
+                  <input type="date" value={salesDateFrom} onChange={e => setSalesDateFrom(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '4px' }}>📅 إلى تاريخ</label>
+                  <input type="date" value={salesDateTo} onChange={e => setSalesDateTo(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                </div>
+              </div>
+            </div>
+
+            {/* ملخص أرقام */}
+            <div style={{ padding: '15px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', background: '#fffbf0', borderBottom: '1px solid #eee' }}>
+              {[
+                { label: 'عدد المبيعات', val: salesReportData.list.length, color: '#2471a3', icon: '🐑' },
+                { label: 'إجمالي البيع', val: salesReportData.totalSales.toLocaleString() + ' ر', color: '#27ae60', icon: '💵' },
+                { label: 'إجمالي الشراء', val: salesReportData.totalCost.toLocaleString() + ' ر', color: '#e67e22', icon: '🛒' },
+                { label: 'صافي الربح', val: salesReportData.totalProfit.toLocaleString() + ' ر', color: salesReportData.totalProfit >= 0 ? '#27ae60' : '#e74c3c', icon: salesReportData.totalProfit >= 0 ? '📈' : '📉' },
+              ].map(s => (
+                <div key={s.label} style={{ background: 'white', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #f0e68c' }}>
+                  <div style={{ fontSize: '16px', fontWeight: 'bold', color: s.color }}>{s.icon} {s.val}</div>
+                  <div style={{ fontSize: '11px', color: '#888', marginTop: '3px' }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* المحتوى حسب التبويب */}
+            <div style={{ padding: '15px 20px', maxHeight: '420px', overflowY: 'auto' }}>
+              {salesReportData.list.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '50px', color: '#999' }}>
+                  <div style={{ fontSize: '40px', marginBottom: '10px' }}>📭</div>
+                  <div>لا توجد مبيعات في هذه الفترة</div>
+                  {!salesDateFrom && <div style={{ fontSize: '12px', marginTop: '8px', color: '#bbb' }}>حدد تاريخ البداية لتصفية النتائج</div>}
+                </div>
+              ) : salesReportTab === 'sales' ? (
+                // ===== تبويب المبيعات =====
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {salesReportData.list.map((animal, i) => (
+                    <div key={`${animal.type}-${animal.id}`} style={{ background: 'white', border: '1px solid #f0e68c', borderRadius: '10px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <div>
+                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3D2817' }}>
+                          #{animal.number}
+                          <span style={{ marginRight: '8px', fontSize: '12px', color: '#888' }}>{animal.type === 'sheep' ? '🐑 ضان' : animal.type === 'goat' ? '🐐 ماعز' : `🐄 ${animal.type}`}</span>
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#888', marginTop: '3px' }}>
+                          📅 تاريخ البيع: {new Date(animal.saleDate).toLocaleDateString('ar-SA')}
+                          {animal.purchaseDate && <span style={{ marginRight: '10px' }}>🛒 تاريخ الشراء: {new Date(animal.purchaseDate).toLocaleDateString('ar-SA')}</span>}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'left', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                        {animal.purchasePriceNum > 0 && (
+                          <div style={{ background: '#fdebd0', borderRadius: '6px', padding: '6px 10px', textAlign: 'center' }}>
+                            <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#e67e22' }}>{animal.purchasePriceNum.toLocaleString()} ر</div>
+                            <div style={{ fontSize: '10px', color: '#e67e22' }}>سعر الشراء</div>
+                          </div>
+                        )}
+                        <div style={{ background: '#d5f5e3', borderRadius: '6px', padding: '6px 10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#27ae60' }}>{animal.salePriceNum.toLocaleString()} ر</div>
+                          <div style={{ fontSize: '10px', color: '#27ae60' }}>سعر البيع</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                // ===== تبويب الأرباح =====
+                <div>
+                  {salesReportData.withProfit.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '30px', background: '#fef9e7', borderRadius: '10px', color: '#b7950b' }}>
+                      <div style={{ fontSize: '30px', marginBottom: '8px' }}>⚠️</div>
+                      <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>لا يوجد سعر شراء مسجل</div>
+                      <div style={{ fontSize: '12px' }}>عند إضافة أو تعديل حيوان، أدخل "سعر الشراء" لحساب الربح الصافي</div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {salesReportData.withProfit
+                        .sort((a, b) => b.profit - a.profit)
+                        .map(animal => {
+                          const isProfit = animal.profit >= 0;
+                          return (
+                            <div key={`${animal.type}-${animal.id}`} style={{ background: isProfit ? '#f9fff9' : '#fff9f9', border: `1px solid ${isProfit ? '#a9dfbf' : '#f1948a'}`, borderRadius: '10px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                              <div>
+                                <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3D2817' }}>
+                                  #{animal.number}
+                                  <span style={{ marginRight: '8px', fontSize: '12px', color: '#888' }}>{animal.type === 'sheep' ? '🐑' : animal.type === 'goat' ? '🐐' : '🐄'}</span>
+                                </div>
+                                <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                  <span>🛒 شراء: {animal.purchasePriceNum.toLocaleString()} ر</span>
+                                  <span>💵 بيع: {animal.salePriceNum.toLocaleString()} ر</span>
+                                  <span>📅 {new Date(animal.saleDate).toLocaleDateString('ar-SA')}</span>
+                                </div>
+                              </div>
+                              <div style={{ background: isProfit ? '#27ae60' : '#e74c3c', color: 'white', borderRadius: '8px', padding: '8px 14px', textAlign: 'center', minWidth: '90px' }}>
+                                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{isProfit ? '+' : ''}{animal.profit.toLocaleString()}</div>
+                                <div style={{ fontSize: '10px', opacity: 0.9 }}>ريال {isProfit ? 'ربح' : 'خسارة'}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      {/* ملخص نهائي */}
+                      <div style={{ background: salesReportData.totalProfit >= 0 ? '#d5f5e3' : '#fadbd8', borderRadius: '10px', padding: '15px', marginTop: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `2px solid ${salesReportData.totalProfit >= 0 ? '#27ae60' : '#e74c3c'}` }}>
+                        <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#333' }}>📊 إجمالي الأرباح ({salesReportData.withProfit.length} حيوان)</span>
+                        <span style={{ fontWeight: 'bold', fontSize: '18px', color: salesReportData.totalProfit >= 0 ? '#27ae60' : '#e74c3c' }}>
+                          {salesReportData.totalProfit >= 0 ? '+' : ''}{salesReportData.totalProfit.toLocaleString()} ريال
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowSalesReport(false)} style={{ width: '100%', background: '#d4ac0d', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
