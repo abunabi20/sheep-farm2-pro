@@ -260,6 +260,29 @@ const App = () => {
   const [refillForm, setRefillForm] = useState({
     date: new Date().toISOString().split('T')[0], price: '', notes: ''
   });
+
+  // ===== نظام إدارة العمال =====
+  const [showWorkersSystem, setShowWorkersSystem] = useState(false);
+  const [workersTab, setWorkersTab] = useState('list'); // list | costs | summary
+  const [workers, setWorkers] = useState(() => {
+    const s = localStorage.getItem('workersData');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddWorker, setShowAddWorker] = useState(false);
+  const [editWorkerId, setEditWorkerId] = useState(null);
+  const [workerForm, setWorkerForm] = useState({
+    name: '', description: '', nationality: '', salary: '',
+    startDate: '', status: 'active', // active | travel | sick | vacation | terminated
+    notes: ''
+  });
+  const [showAddWorkerCost, setShowAddWorkerCost] = useState(false);
+  const [workerCostWorkerId, setWorkerCostWorkerId] = useState(null);
+  const [workerCostForm, setWorkerCostForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    type: 'residence', // residence | ticket | medical | other
+    amount: '', description: '', notes: ''
+  });
+  const [selectedWorkerDetail, setSelectedWorkerDetail] = useState(null);
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -1171,6 +1194,71 @@ const App = () => {
     setRefillCylinderId(null);
   };
 
+  // ===== دوال العمال =====
+  const saveWorkers = useCallback((updated) => {
+    setWorkers(updated);
+    localStorage.setItem('workersData', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/workers`), updated).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/workers`), (snap) => { if (snap.exists()) setWorkers(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  const handleSaveWorker = () => {
+    if (!workerForm.name) { alert('أدخل اسم العامل'); return; }
+    const data = { ...workerForm, salary: parseFloat(workerForm.salary) || 0 };
+    let updated;
+    if (editWorkerId) {
+      updated = workers.map(w => w.id === editWorkerId ? { ...w, ...data } : w);
+    } else {
+      updated = [...workers, { id: `w_${Date.now()}`, ...data, costs: [] }];
+    }
+    saveWorkers(updated);
+    setWorkerForm({ name: '', description: '', nationality: '', salary: '', startDate: '', status: 'active', notes: '' });
+    setEditWorkerId(null);
+    setShowAddWorker(false);
+  };
+
+  const handleSaveWorkerCost = () => {
+    if (!workerCostForm.amount || !workerCostForm.date) { alert('أدخل المبلغ والتاريخ'); return; }
+    const worker = workers.find(w => w.id === workerCostWorkerId);
+    if (!worker) return;
+    const costs = worker.costs || [];
+    const newCost = { id: `wc_${Date.now()}`, ...workerCostForm, amount: parseFloat(workerCostForm.amount) || 0 };
+    const updated = workers.map(w => w.id === workerCostWorkerId ? { ...w, costs: [...costs, newCost] } : w);
+    saveWorkers(updated);
+    setWorkerCostForm({ date: new Date().toISOString().split('T')[0], type: 'residence', amount: '', description: '', notes: '' });
+    setShowAddWorkerCost(false);
+    setWorkerCostWorkerId(null);
+  };
+
+  // إحصائيات العمال
+  const workersStats = useMemo(() => {
+    const activeWorkers = workers.filter(w => w.status === 'active' || w.status === 'sick' || w.status === 'vacation');
+    const totalMonthlySalary = activeWorkers.reduce((s, w) => s + (parseFloat(w.salary) || 0), 0);
+    const totalAllCosts = workers.reduce((s, w) => s + (w.costs || []).reduce((x, c) => x + (parseFloat(c.amount) || 0), 0), 0);
+    const byStatus = {
+      active: workers.filter(w => w.status === 'active').length,
+      travel: workers.filter(w => w.status === 'travel').length,
+      sick: workers.filter(w => w.status === 'sick').length,
+      vacation: workers.filter(w => w.status === 'vacation').length,
+      terminated: workers.filter(w => w.status === 'terminated').length,
+    };
+    return { activeWorkers, totalMonthlySalary, totalYearlySalary: totalMonthlySalary * 12, totalAllCosts, grandTotal: totalMonthlySalary + totalAllCosts, byStatus };
+  }, [workers]);
+
+  const costTypeLabel = (type) => {
+    const labels = { residence: '🪪 تجديد إقامة', ticket: '✈️ تذاكر سفر', medical: '🏥 علاج طبي', other: '📌 أخرى' };
+    return labels[type] || type;
+  };
+
+  const statusLabel = (status) => {
+    const labels = { active: { text: '✅ نشط', color: '#27ae60', bg: '#d5f5e3' }, travel: { text: '✈️ مسافر', color: '#2471a3', bg: '#d6eaf8' }, sick: { text: '🤒 مريض', color: '#e67e22', bg: '#fdebd0' }, vacation: { text: '🌴 إجازة', color: '#8e44ad', bg: '#f5eef8' }, terminated: { text: '❌ منتهي', color: '#e74c3c', bg: '#fadbd8' } };
+    return labels[status] || { text: status, color: '#888', bg: '#eee' };
+  };
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -1453,6 +1541,7 @@ const App = () => {
             <button onClick={() => { setShowFeedSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6e4b1f', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🌾 إدارة الأعلاف</button>
             <button onClick={() => { setShowSolarSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>☀️ الطاقة الشمسية</button>
             <button onClick={() => { setShowGasSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2e4057', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔵 مراقبة الغاز</button>
+            <button onClick={() => { setShowWorkersSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#784212', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👷 إدارة العمال</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -1906,6 +1995,315 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal إدارة العمال ===== */}
+      {showWorkersSystem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowWorkersSystem(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '780px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #784212, #5d3310)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>👷 إدارة العمال والرواتب</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>الرواتب · التكاليف الإضافية · ملخص المصروفات</p>
+              </div>
+              <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.15)', borderRadius: '8px', padding: '8px 14px' }}>
+                <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{workers.filter(w => w.status === 'active').length} / {workers.length}</div>
+                <div style={{ fontSize: '10px', opacity: 0.85 }}>نشط / الكل</div>
+              </div>
+            </div>
+
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#fdf8f3' }}>
+              {[
+                { key: 'list', label: '👷 العمال' },
+                { key: 'costs', label: '💸 التكاليف الإضافية' },
+                { key: 'summary', label: '📊 ملخص المصروفات' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setWorkersTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: workersTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: workersTab === tab.key ? '3px solid #784212' : '3px solid transparent', cursor: 'pointer', fontWeight: workersTab === tab.key ? 'bold' : 'normal', color: workersTab === tab.key ? '#784212' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: '580px', overflowY: 'auto', padding: '15px 20px' }}>
+
+              {/* ===== تبويب العمال ===== */}
+              {workersTab === 'list' && (
+                <div>
+                  {/* ملخص سريع */}
+                  {workers.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(110px,1fr))', gap: '8px', marginBottom: '15px' }}>
+                      {[
+                        { label: '✅ نشط', val: workersStats.byStatus.active, color: '#27ae60', bg: '#d5f5e3' },
+                        { label: '✈️ مسافر', val: workersStats.byStatus.travel, color: '#2471a3', bg: '#d6eaf8' },
+                        { label: '🤒 مريض', val: workersStats.byStatus.sick, color: '#e67e22', bg: '#fdebd0' },
+                        { label: '🌴 إجازة', val: workersStats.byStatus.vacation, color: '#8e44ad', bg: '#f5eef8' },
+                        { label: '❌ منتهي', val: workersStats.byStatus.terminated, color: '#e74c3c', bg: '#fadbd8' },
+                      ].map(s => (
+                        <div key={s.label} style={{ background: s.bg, borderRadius: '8px', padding: '8px', textAlign: 'center', border: `1px solid ${s.color}30` }}>
+                          <div style={{ fontSize: '18px', fontWeight: 'bold', color: s.color }}>{s.val}</div>
+                          <div style={{ fontSize: '11px', color: s.color }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* قائمة العمال */}
+                  {workers.map(worker => {
+                    const st = statusLabel(worker.status);
+                    const workerCosts = (worker.costs || []).reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+                    const monthsWorked = worker.startDate ? Math.floor((new Date() - new Date(worker.startDate)) / (1000*60*60*24*30)) : null;
+                    const isActive = worker.status !== 'travel' && worker.status !== 'terminated';
+                    return (
+                      <div key={worker.id} style={{ background: worker.status === 'terminated' ? '#fdf2f2' : worker.status === 'travel' ? '#f0f6ff' : '#fdfaf6', border: `1.5px solid ${st.color}40`, borderRadius: '12px', padding: '14px', marginBottom: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3d2000', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              👷 {worker.name}
+                              <span style={{ background: st.bg, color: st.color, fontSize: '11px', padding: '2px 8px', borderRadius: '8px', fontWeight: 'bold' }}>{st.text}</span>
+                              {worker.status === 'travel' && <span style={{ fontSize: '11px', color: '#2471a3' }}>⏸ الراتب موقوف</span>}
+                            </div>
+                            {worker.description && <div style={{ fontSize: '12px', color: '#666', marginTop: '3px' }}>💼 {worker.description}</div>}
+                            <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                              {worker.nationality && <span>🌍 {worker.nationality}</span>}
+                              {worker.startDate && <span>📅 منذ: {new Date(worker.startDate).toLocaleDateString('ar-SA')}</span>}
+                              {monthsWorked !== null && <span>⏱️ {monthsWorked} شهر</span>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                            <button onClick={() => { setWorkerCostWorkerId(worker.id); setShowAddWorkerCost(true); }} style={{ background: '#fdebd0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>💸 تكلفة</button>
+                            <button onClick={() => { setWorkerForm({ name: worker.name, description: worker.description||'', nationality: worker.nationality||'', salary: worker.salary, startDate: worker.startDate||'', status: worker.status, notes: worker.notes||'' }); setEditWorkerId(worker.id); setShowAddWorker(true); }} style={{ background: '#f0f9f6', border: '1px solid #784212', color: '#784212', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { if (window.confirm(`حذف "${worker.name}"؟`)) saveWorkers(workers.filter(w => w.id !== worker.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                          </div>
+                        </div>
+
+                        {/* الراتب والتكاليف */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(110px,1fr))', gap: '7px' }}>
+                          <div style={{ background: isActive ? '#d5f5e3' : '#eee', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: 'bold', color: isActive ? '#27ae60' : '#999', fontSize: '15px' }}>{isActive ? parseFloat(worker.salary||0).toLocaleString() : '—'} ر</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>الراتب الشهري</div>
+                          </div>
+                          <div style={{ background: '#fef9e7', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: 'bold', color: '#b7950b', fontSize: '15px' }}>{isActive ? (parseFloat(worker.salary||0)*12).toLocaleString() : '—'} ر</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>الراتب السنوي</div>
+                          </div>
+                          <div style={{ background: '#fdebd0', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '15px' }}>{workerCosts.toLocaleString()} ر</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>تكاليف إضافية</div>
+                          </div>
+                          <div style={{ background: '#fadbd8', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '15px' }}>{(isActive ? parseFloat(worker.salary||0)*12 + workerCosts : workerCosts).toLocaleString()} ر</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>الإجمالي سنوياً</div>
+                          </div>
+                        </div>
+
+                        {/* ملاحظات */}
+                        {worker.notes && <div style={{ marginTop: '8px', fontSize: '12px', color: '#888', background: '#f9f9f9', padding: '6px 10px', borderRadius: '6px' }}>📝 {worker.notes}</div>}
+                      </div>
+                    );
+                  })}
+
+                  {workers.length === 0 && !showAddWorker && (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '10px' }}>👷</div>
+                      <div>أضف العمال لبدء متابعة الرواتب والتكاليف</div>
+                    </div>
+                  )}
+
+                  {/* نموذج إضافة/تعديل عامل */}
+                  {showAddWorker ? (
+                    <div style={{ background: '#fdf5ec', border: '2px solid #784212', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
+                      <h4 style={{ color: '#784212', margin: '0 0 12px' }}>{editWorkerId ? '✏️ تعديل عامل' : '➕ إضافة عامل'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم العامل *</label><input value={workerForm.name} onChange={e => setWorkerForm(p => ({ ...p, name: e.target.value }))} placeholder="الاسم الكامل" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💼 وصف العمل</label><input value={workerForm.description} onChange={e => setWorkerForm(p => ({ ...p, description: e.target.value }))} placeholder="مثال: راعي الغنم، سائق، عامل نظافة" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🌍 الجنسية</label><input value={workerForm.nationality} onChange={e => setWorkerForm(p => ({ ...p, nationality: e.target.value }))} placeholder="مثال: باكستاني، يمني، سوداني" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 الراتب الشهري (ريال)</label><input type="number" min="0" value={workerForm.salary} onChange={e => setWorkerForm(p => ({ ...p, salary: e.target.value }))} placeholder="مثال: 1200" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الالتحاق</label><input type="date" value={workerForm.startDate} onChange={e => setWorkerForm(p => ({ ...p, startDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الحالة</label>
+                          <select value={workerForm.status} onChange={e => setWorkerForm(p => ({ ...p, status: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="active">✅ نشط</option>
+                            <option value="travel">✈️ مسافر (الراتب موقوف)</option>
+                            <option value="sick">🤒 مريض</option>
+                            <option value="vacation">🌴 إجازة</option>
+                            <option value="terminated">❌ منتهي الخدمة</option>
+                          </select>
+                        </div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={workerForm.notes} onChange={e => setWorkerForm(p => ({ ...p, notes: e.target.value }))} placeholder="أي معلومات إضافية" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveWorker} style={{ background: '#784212', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddWorker(false); setEditWorkerId(null); setWorkerForm({ name: '', description: '', nationality: '', salary: '', startDate: '', status: 'active', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddWorker(true)} style={{ width: '100%', padding: '11px', background: '#784212', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة عامل</button>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب التكاليف الإضافية ===== */}
+              {workersTab === 'costs' && (
+                <div>
+                  {workers.map(worker => {
+                    const costs = [...(worker.costs || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+                    const total = costs.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+                    return (
+                      <div key={worker.id} style={{ marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+                          <div style={{ fontWeight: 'bold', color: '#784212', fontSize: '13px' }}>
+                            👷 {worker.name}
+                            <span style={{ marginRight: '6px', fontSize: '11px', color: '#888', fontWeight: 'normal' }}>{worker.description}</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {total > 0 && <span style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '12px' }}>إجمالي: {total.toLocaleString()} ر</span>}
+                            <button onClick={() => { setWorkerCostWorkerId(worker.id); setShowAddWorkerCost(true); }} style={{ background: '#fdebd0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>💸 إضافة تكلفة</button>
+                          </div>
+                        </div>
+                        {costs.length === 0 ? (
+                          <div style={{ background: '#f9f9f9', borderRadius: '8px', padding: '10px', color: '#bbb', fontSize: '12px', textAlign: 'center' }}>لا توجد تكاليف إضافية</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                            {costs.map(cost => (
+                              <div key={cost.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '9px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                                <div>
+                                  <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#333' }}>{costTypeLabel(cost.type)}</div>
+                                  <div style={{ fontSize: '11px', color: '#888', marginTop: '2px', display: 'flex', gap: '10px' }}>
+                                    <span>📅 {new Date(cost.date).toLocaleDateString('ar-SA')}</span>
+                                    {cost.description && <span>📝 {cost.description}</span>}
+                                  </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 'bold', color: '#e74c3c', fontSize: '14px' }}>{parseFloat(cost.amount).toLocaleString()} ر</span>
+                                  <button onClick={() => { if (window.confirm('حذف هذه التكلفة؟')) { const updated = workers.map(w => w.id === worker.id ? { ...w, costs: w.costs.filter(c => c.id !== cost.id) } : w); saveWorkers(updated); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {workers.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>أضف عمالاً أولاً من تبويب العمال</div>}
+
+                  {/* Modal إضافة تكلفة */}
+                  {showAddWorkerCost && workerCostWorkerId && (
+                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddWorkerCost(false)}>
+                      <div style={{ background: 'white', borderRadius: '12px', maxWidth: '420px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ background: 'linear-gradient(135deg, #784212, #5d3310)', padding: '14px 18px', color: 'white' }}>
+                          <h3 style={{ margin: 0, fontSize: '15px' }}>💸 إضافة تكلفة — {workers.find(w => w.id === workerCostWorkerId)?.name}</h3>
+                        </div>
+                        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '11px' }}>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع التكلفة</label>
+                            <select value={workerCostForm.type} onChange={e => setWorkerCostForm(p => ({ ...p, type: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                              <option value="residence">🪪 تجديد إقامة</option>
+                              <option value="ticket">✈️ تذاكر سفر</option>
+                              <option value="medical">🏥 علاج طبي</option>
+                              <option value="other">📌 أخرى</option>
+                            </select>
+                          </div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 التاريخ</label><input type="date" value={workerCostForm.date} onChange={e => setWorkerCostForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 المبلغ (ريال) *</label><input type="number" min="0" value={workerCostForm.amount} onChange={e => setWorkerCostForm(p => ({ ...p, amount: e.target.value }))} placeholder="مثال: 500" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وصف التكلفة</label><input value={workerCostForm.description} onChange={e => setWorkerCostForm(p => ({ ...p, description: e.target.value }))} placeholder="مثال: تجديد إقامة سنوية، تذكرة إجازة" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '4px' }}>
+                            <button onClick={handleSaveWorkerCost} style={{ background: '#784212', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                            <button onClick={() => setShowAddWorkerCost(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب ملخص المصروفات ===== */}
+              {workersTab === 'summary' && (
+                <div>
+                  {/* البطاقة الرئيسية */}
+                  <div style={{ background: 'linear-gradient(135deg, #784212, #5d3310)', borderRadius: '12px', padding: '18px', marginBottom: '15px', color: 'white' }}>
+                    <div style={{ fontSize: '13px', opacity: 0.85, marginBottom: '10px' }}>💰 إجمالي تكاليف العمالة</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '10px' }}>
+                      {[
+                        { label: 'رواتب شهرية', val: workersStats.totalMonthlySalary.toLocaleString() + ' ر' },
+                        { label: 'رواتب سنوية', val: workersStats.totalYearlySalary.toLocaleString() + ' ر' },
+                        { label: 'تكاليف إضافية', val: workersStats.totalAllCosts.toLocaleString() + ' ر' },
+                        { label: 'الإجمالي الكلي', val: (workersStats.totalYearlySalary + workersStats.totalAllCosts).toLocaleString() + ' ر' },
+                      ].map(s => (
+                        <div key={s.label} style={{ background: 'rgba(255,255,255,0.15)', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '15px' }}>{s.val}</div>
+                          <div style={{ fontSize: '10px', opacity: 0.8, marginTop: '2px' }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* تفصيل حسب كل عامل */}
+                  {workers.map(worker => {
+                    const isActive = worker.status !== 'travel' && worker.status !== 'terminated';
+                    const monthlySalary = isActive ? parseFloat(worker.salary || 0) : 0;
+                    const yearlySalary = monthlySalary * 12;
+                    const extraCosts = (worker.costs || []).reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+                    const total = yearlySalary + extraCosts;
+                    const st = statusLabel(worker.status);
+                    const costsByType = {};
+                    (worker.costs || []).forEach(c => { costsByType[c.type] = (costsByType[c.type] || 0) + parseFloat(c.amount || 0); });
+                    return (
+                      <div key={worker.id} style={{ background: 'white', border: '1px solid #e8d5b0', borderRadius: '10px', padding: '14px', marginBottom: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#784212' }}>👷 {worker.name}</div>
+                            <div style={{ fontSize: '12px', color: '#888', marginTop: '2px', display: 'flex', gap: '10px' }}>
+                              {worker.description && <span>{worker.description}</span>}
+                              <span style={{ background: st.bg, color: st.color, padding: '1px 6px', borderRadius: '5px', fontSize: '11px' }}>{st.text}</span>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'center', background: '#fdf5ec', borderRadius: '8px', padding: '6px 12px', border: '1px solid #e8d5b0' }}>
+                            <div style={{ fontWeight: 'bold', color: '#784212', fontSize: '15px' }}>{total.toLocaleString()} ر</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>إجمالي سنوي</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '6px', fontSize: '12px' }}>
+                          <div style={{ background: '#d5f5e3', borderRadius: '6px', padding: '7px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: 'bold', color: '#27ae60' }}>{monthlySalary.toLocaleString()} ر</div>
+                            <div style={{ color: '#555', fontSize: '10px' }}>شهري</div>
+                          </div>
+                          <div style={{ background: '#fef9e7', borderRadius: '6px', padding: '7px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: 'bold', color: '#b7950b' }}>{yearlySalary.toLocaleString()} ر</div>
+                            <div style={{ color: '#555', fontSize: '10px' }}>سنوي (راتب)</div>
+                          </div>
+                          {Object.entries(costsByType).map(([type, amount]) => (
+                            <div key={type} style={{ background: '#fdebd0', borderRadius: '6px', padding: '7px', textAlign: 'center' }}>
+                              <div style={{ fontWeight: 'bold', color: '#e67e22' }}>{amount.toLocaleString()} ر</div>
+                              <div style={{ color: '#555', fontSize: '10px' }}>{costTypeLabel(type)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* اقتراحات */}
+                  <div style={{ background: '#f0f4ff', borderRadius: '10px', padding: '14px', border: '1px solid #c5cae9', marginTop: '5px' }}>
+                    <div style={{ fontWeight: 'bold', color: '#2471a3', marginBottom: '8px', fontSize: '13px' }}>💡 اقتراحات لتحسين إدارة العمال:</div>
+                    <div style={{ fontSize: '12px', color: '#555', lineHeight: '2' }}>
+                      ✅ <strong>جدول الإجازات:</strong> خطط للإجازات مسبقاً لتجنب تعطل العمل<br/>
+                      ✅ <strong>تجديد الإقامة:</strong> راقب تواريخ انتهاء الإقامات وجددها مبكراً لتجنب الغرامات<br/>
+                      ✅ <strong>التأمين الصحي:</strong> يُقلل تكاليف العلاج على المدى البعيد<br/>
+                      ✅ <strong>تقييم الأداء:</strong> ربط الزيادة بالإنتاجية يحفز العمال ويضبط التكلفة<br/>
+                      ✅ <strong>العمال المسافرون:</strong> سجّل تواريخ السفر والعودة لحساب الراتب بدقة
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowWorkersSystem(false)} style={{ width: '100%', background: '#784212', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
