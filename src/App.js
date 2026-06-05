@@ -196,6 +196,7 @@ const App = () => {
   const [showAddFarmMaint, setShowAddFarmMaint] = useState(false);
   const [farmMaintForm, setFarmMaintForm] = useState({ ...EMPTY_MAINT, area: '' });
   const [showFarmMaintSystem, setShowFarmMaintSystem] = useState(false);
+  const [showAlertsCenter, setShowAlertsCenter] = useState(false);
   const DEFAULT_FEEDS = [
     { id: 'f1', name: 'شعير', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 5 },
     { id: 'f2', name: 'برسيم', unit: 'كيس', unitWeight: 30, stock: 0, minAlert: 3 },
@@ -1261,6 +1262,101 @@ const App = () => {
     return { total, avgMonthly, avgYearly };
   }, [gasStats]);
 
+  // ===== تنبيهات مركزية =====
+  const allAlerts = useMemo(() => {
+    const alerts = [];
+    const today = new Date();
+    const daysDiff = (dateStr) => dateStr ? Math.ceil((new Date(dateStr) - today) / 86400000) : null;
+
+    // 🔋 البطاريات — ضمان وعمر
+    batteries.forEach(bat => {
+      const wDays = daysRemaining(bat.purchaseDate, Math.round(bat.warrantyYears * 365));
+      const lDays = daysRemaining(bat.purchaseDate, Math.round(bat.lifespanYears * 365));
+      if (wDays !== null && wDays <= 30)
+        alerts.push({ id: `bat-w-${bat.id}`, system: '🔋 الطاقة الشمسية', item: bat.name, msg: wDays === 0 ? 'انتهى الضمان!' : `ينتهي الضمان خلال ${wDays} يوم`, urgency: wDays === 0 ? 'critical' : wDays <= 7 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowSolarSystem(true); setSolarTab('batteries'); } });
+      if (lDays !== null && lDays <= 60)
+        alerts.push({ id: `bat-l-${bat.id}`, system: '🔋 الطاقة الشمسية', item: bat.name, msg: lDays === 0 ? '⚠️ انتهى العمر الافتراضي — استبدل!' : `ينتهي العمر الافتراضي خلال ${lDays} يوم`, urgency: lDays === 0 ? 'critical' : lDays <= 14 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowSolarSystem(true); setSolarTab('batteries'); } });
+    });
+
+    // ⚡ الإنفرتر — ضمان
+    inverters.forEach(inv => {
+      const wDays = daysRemaining(inv.purchaseDate, Math.round(inv.warrantyYears * 365));
+      if (wDays !== null && wDays <= 30)
+        alerts.push({ id: `inv-${inv.id}`, system: '⚡ الإنفرتر', item: inv.name, msg: wDays === 0 ? 'انتهى الضمان!' : `ينتهي الضمان خلال ${wDays} يوم`, urgency: wDays === 0 ? 'critical' : 'medium', action: () => { setShowAlertsCenter(false); setShowSolarSystem(true); setSolarTab('inverter'); } });
+    });
+
+    // ☀️ الألواح — غسيل
+    panels.forEach(panel => {
+      const d = daysRemaining(panel.lastWash, panel.washIntervalDays);
+      if (d !== null && d <= 7)
+        alerts.push({ id: `panel-${panel.id}`, system: '☀️ الألواح الشمسية', item: panel.name, msg: d === 0 ? 'حان وقت الغسيل!' : `موعد الغسيل خلال ${d} يوم`, urgency: d === 0 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowSolarSystem(true); setSolarTab('panels'); } });
+    });
+
+    // ⚙️ المواطير — عمر افتراضي
+    pumps.forEach(pump => {
+      const rem = pumpRemainingDays(pump.purchaseDate, pump.lifespan);
+      if (rem !== null && rem <= 60)
+        alerts.push({ id: `pump-life-${pump.id}`, system: '⚙️ المواطير', item: pump.name, msg: rem === 0 ? 'انتهى العمر الافتراضي!' : `ينتهي العمر الافتراضي خلال ${rem} يوم`, urgency: rem === 0 ? 'critical' : rem <= 14 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('pumps'); } });
+    });
+
+    // 🛢️ زيت المواطير
+    pumps.forEach(pump => {
+      const oil = oilStatus(pump);
+      if (oil.daysLeft !== null && oil.daysLeft <= 3)
+        alerts.push({ id: `pump-oil-${pump.id}`, system: '🛢️ زيت المواطير', item: pump.name, msg: oil.daysLeft <= 0 ? `متأخر ${Math.abs(oil.daysLeft)} يوم عن تغيير الزيت!` : `موعد تغيير الزيت خلال ${oil.daysLeft} يوم`, urgency: oil.daysLeft <= 0 ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('oil'); setSelectedPumpId(pump.id); } });
+    });
+
+    // ⛽ بنزين المواطير
+    petrolStats.forEach(pump => {
+      if (pump.needsAlert)
+        alerts.push({ id: `petrol-${pump.id}`, system: '⛽ بنزين المواطير', item: pump.name, msg: `يحتاج تعبئة بنزين — باقي تقريباً ${pump.daysLeft} يوم`, urgency: pump.daysLeft === 0 ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('petrol'); } });
+    });
+
+    // 💊 الأدوية — انتهاء صلاحية
+    medicines.forEach(med => {
+      const d = daysUntilExpiry(med.expiry);
+      if (d !== null && d <= 90)
+        alerts.push({ id: `med-${med.id}`, system: '💊 المكتبة البيطرية', item: med.name, msg: d <= 0 ? 'انتهت الصلاحية!' : `تنتهي الصلاحية خلال ${d} يوم`, urgency: d <= 0 ? 'critical' : d <= 30 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowVetLibrary(true); setVetTab('inventory'); } });
+    });
+
+    // 🌾 الأعلاف — مخزون منخفض
+    feedForecast.forEach(feed => {
+      if (feed.alert)
+        alerts.push({ id: `feed-${feed.id}`, system: '🌾 الأعلاف', item: feed.name, msg: feed.daysLeft !== null ? `يكفي ${feed.daysLeft} يوم فقط — المخزون منخفض` : 'المخزون صفر!', urgency: feed.daysLeft === 0 || feed.daysLeft === null ? 'critical' : feed.daysLeft <= 7 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowFeedSystem(true); setFeedTab('forecast'); } });
+    });
+
+    // 🔵 الغاز — تعبئة قريبة
+    gasStats.forEach(cyl => {
+      if (cyl.needsAlert)
+        alerts.push({ id: `gas-${cyl.id}`, system: '🔵 الغاز', item: cyl.name, msg: cyl.daysLeft !== null ? `يحتاج تعبئة — باقي تقريباً ${cyl.daysLeft} يوم` : 'يحتاج تعبئة!', urgency: cyl.daysLeft === 0 || cyl.daysLeft === null ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowGasSystem(true); setGasTab('cylinders'); } });
+    });
+
+    // 🔧 صيانة المواطير القادمة
+    pumpMaintenance.forEach(rec => {
+      const d = daysDiff(rec.nextDate);
+      if (d !== null && d <= 14 && d >= 0)
+        alerts.push({ id: `pumaint-${rec.id}`, system: '🔧 صيانة المواطير', item: rec.title, msg: d === 0 ? 'موعد الصيانة اليوم!' : `موعد الصيانة خلال ${d} يوم`, urgency: d === 0 ? 'critical' : d <= 3 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('pumpmaint'); } });
+    });
+
+    // 🔧 صيانة الطاقة الشمسية القادمة
+    solarMaintenance.forEach(rec => {
+      const d = daysDiff(rec.nextDate);
+      if (d !== null && d <= 14 && d >= 0)
+        alerts.push({ id: `solmaint-${rec.id}`, system: '🔧 صيانة الطاقة', item: rec.title, msg: d === 0 ? 'موعد الصيانة اليوم!' : `موعد الصيانة خلال ${d} يوم`, urgency: d === 0 ? 'critical' : d <= 3 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowSolarSystem(true); setSolarTab('solarmaint'); } });
+    });
+
+    // 🏗️ صيانة المزرعة القادمة
+    farmMaintenance.forEach(rec => {
+      const d = daysDiff(rec.nextDate);
+      if (d !== null && d <= 14 && d >= 0)
+        alerts.push({ id: `farmmaint-${rec.id}`, system: '🏗️ صيانة المزرعة', item: rec.title, msg: d === 0 ? 'موعد الصيانة اليوم!' : `موعد الصيانة خلال ${d} يوم`, urgency: d === 0 ? 'critical' : d <= 3 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowFarmMaintSystem(true); } });
+    });
+
+    // ترتيب: critical أولاً ثم high ثم medium
+    const order = { critical: 0, high: 1, medium: 2 };
+    return alerts.sort((a, b) => order[a.urgency] - order[b.urgency]);
+  }, [batteries, inverters, panels, pumps, petrolStats, medicines, feedForecast, gasStats, pumpMaintenance, solarMaintenance, farmMaintenance]);
+
   const handleSaveCylinder = () => {
     if (!cylinderForm.name) { alert('أدخل اسم الأسطوانة'); return; }
     const data = { ...cylinderForm, sizeKg: parseFloat(cylinderForm.sizeKg) || 25 };
@@ -1627,6 +1723,11 @@ const App = () => {
               {selectedAnimalType === 'sheep' ? '🐑 الضان' : selectedAnimalType === 'goat' ? '🐐 الماعز' : selectedAnimalType}
             </p>
             <button onClick={() => { setShowDashboard(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📊 ملخص الإحصائيات</button>
+            {/* زر التنبيهات المركزية */}
+            <button onClick={() => { setShowAlertsCenter(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: allAlerts.length > 0 ? '#c0392b' : '#7f8c8d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', animation: allAlerts.filter(a=>a.urgency==='critical').length > 0 ? 'none' : 'none' }}>
+              🚨 التنبيهات المركزية
+              {allAlerts.length > 0 && <span style={{ background: 'white', color: '#c0392b', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 'bold', flexShrink: 0 }}>{allAlerts.length}</span>}
+            </button>
             <button onClick={() => { setShowAgeReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👴 تقرير العويد</button>
             <button onClick={() => { setShowNumbersReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔢 تقرير الأرقام</button>
             <button onClick={() => { setShowProductionReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#c0392b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📈 تقرير الإنتاج</button>
@@ -2091,6 +2192,136 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal التنبيهات المركزية ===== */}
+      {showAlertsCenter && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1100, padding: '15px', overflowY: 'auto' }} onClick={() => setShowAlertsCenter(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '720px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 15px 50px rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #922b21, #c0392b)', padding: '18px 22px', color: 'white' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '19px' }}>🚨 لوحة التنبيهات المركزية</h2>
+                  <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.9 }}>جميع التنبيهات من كل الأنظمة في مكان واحد</p>
+                </div>
+                <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '8px 14px' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '22px' }}>{allAlerts.length}</div>
+                  <div style={{ fontSize: '11px', opacity: 0.85 }}>تنبيه</div>
+                </div>
+              </div>
+
+              {/* إحصائيات سريعة */}
+              {allAlerts.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginTop: '14px' }}>
+                  {[
+                    { label: '🔴 حرجة', val: allAlerts.filter(a => a.urgency === 'critical').length, bg: 'rgba(255,255,255,0.25)' },
+                    { label: '🟠 عالية', val: allAlerts.filter(a => a.urgency === 'high').length, bg: 'rgba(255,255,255,0.15)' },
+                    { label: '🟡 متوسطة', val: allAlerts.filter(a => a.urgency === 'medium').length, bg: 'rgba(255,255,255,0.1)' },
+                  ].map(s => (
+                    <div key={s.label} style={{ background: s.bg, borderRadius: '8px', padding: '7px', textAlign: 'center' }}>
+                      <div style={{ fontWeight: 'bold', fontSize: '18px' }}>{s.val}</div>
+                      <div style={{ fontSize: '11px', opacity: 0.85 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* المحتوى */}
+            <div style={{ maxHeight: '560px', overflowY: 'auto', padding: '15px 20px' }}>
+              {allAlerts.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '50px 20px' }}>
+                  <div style={{ fontSize: '60px', marginBottom: '15px' }}>✅</div>
+                  <div style={{ fontWeight: 'bold', fontSize: '18px', color: '#27ae60', marginBottom: '8px' }}>لا توجد تنبيهات!</div>
+                  <div style={{ color: '#888', fontSize: '13px' }}>كل الأنظمة تعمل بشكل طبيعي</div>
+                </div>
+              ) : (
+                <div>
+                  {/* التنبيهات الحرجة */}
+                  {allAlerts.filter(a => a.urgency === 'critical').length > 0 && (
+                    <div style={{ marginBottom: '20px' }}>
+                      <div style={{ background: '#922b21', color: 'white', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        🔴 تنبيهات حرجة — تتطلب تدخلاً فورياً
+                        <span style={{ background: 'white', color: '#922b21', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{allAlerts.filter(a=>a.urgency==='critical').length}</span>
+                      </div>
+                      {allAlerts.filter(a => a.urgency === 'critical').map(alert => (
+                        <div key={alert.id} onClick={alert.action} style={{ background: '#fff5f5', border: '2px solid #e74c3c', borderRadius: '10px', padding: '13px 15px', marginBottom: '8px', cursor: 'pointer', transition: 'all 0.2s' }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#ffe8e8'}
+                          onMouseLeave={e => e.currentTarget.style.background = '#fff5f5'}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: '11px', color: '#e74c3c', fontWeight: 'bold', marginBottom: '3px' }}>{alert.system}</div>
+                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a' }}>{alert.item}</div>
+                              <div style={{ fontSize: '13px', color: '#c0392b', marginTop: '3px', fontWeight: 'bold' }}>{alert.msg}</div>
+                            </div>
+                            <div style={{ background: '#e74c3c', color: 'white', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>اذهب ←</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* التنبيهات العالية */}
+                  {allAlerts.filter(a => a.urgency === 'high').length > 0 && (
+                    <div style={{ marginBottom: '20px' }}>
+                      <div style={{ background: '#ca6f1e', color: 'white', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        🟠 تنبيهات عالية — تحتاج متابعة قريبة
+                        <span style={{ background: 'white', color: '#ca6f1e', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{allAlerts.filter(a=>a.urgency==='high').length}</span>
+                      </div>
+                      {allAlerts.filter(a => a.urgency === 'high').map(alert => (
+                        <div key={alert.id} onClick={alert.action} style={{ background: '#fffbf0', border: '1.5px solid #e67e22', borderRadius: '10px', padding: '12px 15px', marginBottom: '8px', cursor: 'pointer' }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#fef0d3'}
+                          onMouseLeave={e => e.currentTarget.style.background = '#fffbf0'}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: '11px', color: '#e67e22', fontWeight: 'bold', marginBottom: '3px' }}>{alert.system}</div>
+                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a' }}>{alert.item}</div>
+                              <div style={{ fontSize: '13px', color: '#ca6f1e', marginTop: '3px' }}>{alert.msg}</div>
+                            </div>
+                            <div style={{ background: '#e67e22', color: 'white', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>اذهب ←</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* التنبيهات المتوسطة */}
+                  {allAlerts.filter(a => a.urgency === 'medium').length > 0 && (
+                    <div>
+                      <div style={{ background: '#b7950b', color: 'white', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        🟡 تنبيهات متوسطة — للمتابعة
+                        <span style={{ background: 'white', color: '#b7950b', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{allAlerts.filter(a=>a.urgency==='medium').length}</span>
+                      </div>
+                      {allAlerts.filter(a => a.urgency === 'medium').map(alert => (
+                        <div key={alert.id} onClick={alert.action} style={{ background: '#fefdf0', border: '1px solid #f0e68c', borderRadius: '10px', padding: '12px 15px', marginBottom: '8px', cursor: 'pointer' }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#faf8e0'}
+                          onMouseLeave={e => e.currentTarget.style.background = '#fefdf0'}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: '11px', color: '#b7950b', fontWeight: 'bold', marginBottom: '3px' }}>{alert.system}</div>
+                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a' }}>{alert.item}</div>
+                              <div style={{ fontSize: '13px', color: '#b7950b', marginTop: '3px' }}>{alert.msg}</div>
+                            </div>
+                            <div style={{ background: '#b7950b', color: 'white', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>اذهب ←</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee', display: 'flex', gap: '10px' }}>
+              <div style={{ flex: 1, fontSize: '12px', color: '#888', display: 'flex', alignItems: 'center' }}>
+                💡 اضغط على أي تنبيه للانتقال مباشرة إلى النظام
+              </div>
+              <button onClick={() => setShowAlertsCenter(false)} style={{ background: '#c0392b', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>إغلاق</button>
             </div>
           </div>
         </div>
