@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 
@@ -93,6 +93,8 @@ const App = () => {
   const [editTypeName, setEditTypeName] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showAgeReport, setShowAgeReport] = useState(false);
+  const [ageReportFilter, setAgeReportFilter] = useState({ type: 'all', minYears: 5, minMonths: 0 });
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -341,6 +343,26 @@ const App = () => {
   };
 
   // ✅ حفظ مباشرة في Firebase
+  // ✅ حساب تقرير العجائز/العويد
+  const ageReportAnimals = useMemo(() => {
+    const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
+    let result = [];
+    const typesToSearch = ageReportFilter.type === 'all' ? Object.keys(animals) : [ageReportFilter.type];
+    typesToSearch.forEach(type => {
+      const typeAnimals = animals[type] || {};
+      Object.entries(typeAnimals).forEach(([id, data]) => {
+        if (data.status === 'active' || data.status === 'productive') {
+          const age = calculateAge(data.birthDate);
+          const totalMonths = (age.years * 12) + age.months;
+          if (totalMonths >= minTotalMonths) {
+            result.push({ id, type, ...data, ageYears: age.years, ageMonths: age.months, totalMonths });
+          }
+        }
+      });
+    });
+    return result.sort((a, b) => b.totalMonths - a.totalMonths);
+  }, [animals, ageReportFilter]);
+
   const handleSaveAnimal = (e) => {
     e.preventDefault();
     if (!animalForm.number) { alert('أدخل رقم الحيوان'); return; }
@@ -595,6 +617,7 @@ const App = () => {
               {selectedAnimalType === 'sheep' ? '🐑 الضان' : selectedAnimalType === 'goat' ? '🐐 الماعز' : selectedAnimalType}
             </p>
             <button onClick={() => { setShowDashboard(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📊 ملخص الإحصائيات</button>
+            <button onClick={() => { setShowAgeReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👴 تقرير العويد</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -882,8 +905,109 @@ const App = () => {
           </div>
         </div>
       )}
+      {/* Modal تقرير العويد */}
+      {showAgeReport && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '20px', overflowY: 'auto' }} onClick={() => setShowAgeReport(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', maxWidth: '650px', width: '100%', marginTop: '20px', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+            
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #8e44ad, #6c3483)', padding: '20px 25px', color: 'white' }}>
+              <h2 style={{ margin: 0, fontSize: '18px' }}>👴 تقرير العويد والكبار</h2>
+              <p style={{ margin: '5px 0 0', fontSize: '12px', opacity: 0.85 }}>الحيوانات النشطة مرتبة من الأكبر للأصغر</p>
+            </div>
+
+            {/* فلاتر */}
+            <div style={{ padding: '20px 25px', background: '#f9f7f4', borderBottom: '1px solid #eee' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '12px', alignItems: 'end' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>نوع الحيوان</label>
+                  <select
+                    value={ageReportFilter.type}
+                    onChange={e => setAgeReportFilter(p => ({ ...p, type: e.target.value }))}
+                    style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}
+                  >
+                    <option value="all">الكل</option>
+                    {animalTypes.map(t => (
+                      <option key={t} value={t}>{t === 'sheep' ? '🐑 ضان' : t === 'goat' ? '🐐 ماعز' : `🐄 ${t}`}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>الحد الأدنى للعمر (سنوات)</label>
+                  <input
+                    type="number" min="0" max="30"
+                    value={ageReportFilter.minYears}
+                    onChange={e => setAgeReportFilter(p => ({ ...p, minYears: parseInt(e.target.value) || 0 }))}
+                    style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>الأشهر الإضافية</label>
+                  <select
+                    value={ageReportFilter.minMonths}
+                    onChange={e => setAgeReportFilter(p => ({ ...p, minMonths: parseInt(e.target.value) }))}
+                    style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}
+                  >
+                    {[0,1,2,3,4,5,6,7,8,9,10,11].map(m => <option key={m} value={m}>{m} شهر</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginTop: '10px', fontSize: '13px', color: '#8e44ad', fontWeight: 'bold' }}>
+                🔍 عرض الحيوانات التي عمرها أكثر من {ageReportFilter.minYears} سنة {ageReportFilter.minMonths > 0 ? `و ${ageReportFilter.minMonths} شهر` : ''} — النتائج: {ageReportAnimals.length}
+              </div>
+            </div>
+
+            {/* النتائج */}
+            <div style={{ padding: '15px 25px', maxHeight: '400px', overflowY: 'auto' }}>
+              {ageReportAnimals.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                  <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔍</div>
+                  <div>لا توجد حيوانات بهذا العمر</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {ageReportAnimals.map((animal, index) => (
+                    <div key={`${animal.type}-${animal.id}`} style={{ background: index === 0 ? '#fdf3ff' : '#f9f9f9', border: `2px solid ${index === 0 ? '#8e44ad' : '#eee'}`, borderRadius: '10px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        {/* ترتيب */}
+                        <div style={{ background: index === 0 ? '#8e44ad' : '#ddd', color: index === 0 ? 'white' : '#555', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '13px', flexShrink: 0 }}>
+                          {index + 1}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3D2817' }}>
+                            رقم {animal.number}
+                            {index === 0 && <span style={{ marginRight: '6px', fontSize: '12px', background: '#8e44ad', color: 'white', padding: '2px 6px', borderRadius: '4px' }}>الأكبر</span>}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+                            {animal.type === 'sheep' ? '🐑 ضان' : animal.type === 'goat' ? '🐐 ماعز' : `🐄 ${animal.type}`}
+                            {' · '}
+                            {animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}
+                            {animal.healthStatus === 'sick' && <span style={{ color: '#e74c3c', marginRight: '6px' }}> · ⚠️ مريض</span>}
+                          </div>
+                        </div>
+                      </div>
+                      {/* العمر */}
+                      <div style={{ textAlign: 'center', background: 'white', padding: '8px 12px', borderRadius: '8px', border: '1px solid #ddd', minWidth: '90px' }}>
+                        <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#8e44ad' }}>{animal.ageYears > 0 ? `${animal.ageYears} سنة` : ''}</div>
+                        <div style={{ fontSize: '13px', color: '#888' }}>{animal.ageMonths > 0 ? `${animal.ageMonths} شهر` : animal.ageYears > 0 ? 'كاملة' : ''}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '15px 25px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowAgeReport(false)} style={{ width: '100%', background: '#8e44ad', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default App;
+
+    
