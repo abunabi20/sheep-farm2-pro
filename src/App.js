@@ -282,7 +282,6 @@ const App = () => {
     type: 'residence', // residence | ticket | medical | other
     amount: '', description: '', notes: ''
   });
-  const [selectedWorkerDetail, setSelectedWorkerDetail] = useState(null);
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
