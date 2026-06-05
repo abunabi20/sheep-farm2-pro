@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+    import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 
@@ -67,7 +67,6 @@ const App = () => {
   const [showAddType, setShowAddType] = useState(false);
   const [newTypeName, setNewTypeName] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -305,21 +304,6 @@ const App = () => {
     setAnimalForm(p => ({ ...p, [f]: v }));
   }, []);
 
-  const handleAddAnimal = () => {
-    if (!animalForm.number || !animalForm.birthDate) return alert('ملء البيانات');
-    
-    const animalId = editingId || `${selectedAnimalType}-${Date.now()}`;
-    const updated = { ...animals };
-    if (!updated[selectedAnimalType]) updated[selectedAnimalType] = {};
-    updated[selectedAnimalType][animalId] = animalForm;
-    
-    setAnimals(updated);
-    setShowModal(false);
-    setShowSaveConfirm(false);
-    setAnimalForm({ number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0], status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '', saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular', slaughterLocation: '', slaughterNotes: '', deathDate: '' });
-    setEditingId(null);
-    alert('✓ تم الحفظ بنجاح!');
-  };
 
   const handleAddType = () => {
     if (!newTypeName) return alert('أدخل اسم النوع');
@@ -934,3 +918,5 @@ const App = () => {
 };
 
 export default App;
+
+    
