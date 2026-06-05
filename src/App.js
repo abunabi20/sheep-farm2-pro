@@ -693,7 +693,7 @@ const App = () => {
           <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '700px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>تسجيل حيوان جديد</h2>
             
-            <form onSubmit={(e) => { e.preventDefault(); setShowSaveConfirm(true); }} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <form onSubmit={(e) => { e.preventDefault(); if (!animalForm.number) { alert('أدخل رقم الحيوان'); return; } const animalId = editingId || `${selectedAnimalType}-${Date.now()}`; setAnimals(prev => { const updated = { ...prev }; if (!updated[selectedAnimalType]) updated[selectedAnimalType] = {}; updated[selectedAnimalType][animalId] = animalForm; return updated; }); setShowModal(false); setAnimalForm({ number: '', gender: 'female', birthDate: new Date().toISOString().split('T')[0], status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '', saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular', slaughterLocation: '', slaughterNotes: '', deathDate: '' }); setEditingId(null); alert('✓ تم الحفظ بنجاح!'); }} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <div>
                   <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>الرقم *</label>
