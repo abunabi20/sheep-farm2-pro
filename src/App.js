@@ -143,6 +143,34 @@ const App = () => {
   const [showAddExperience, setShowAddExperience] = useState(false);
   const [editExperienceId, setEditExperienceId] = useState(null);
   const [experienceForm, setExperienceForm] = useState({ disease: '', symptoms: '', treatment: '', medicine: '', successRate: 90, notes: '' });
+
+  // ===== نظام مراقبة المواطير =====
+  const [showPumpSystem, setShowPumpSystem] = useState(false);
+  const [pumpTab, setPumpTab] = useState('pumps'); // pumps | oil | spark | brands
+  const [pumps, setPumps] = useState(() => {
+    const s = localStorage.getItem('pumpData');
+    return s ? JSON.parse(s) : [];
+  });
+  const [selectedPumpId, setSelectedPumpId] = useState(null);
+  const [showAddPump, setShowAddPump] = useState(false);
+  const [editPumpId, setEditPumpId] = useState(null);
+  const [pumpForm, setPumpForm] = useState({
+    name: '', brand: '', purchaseDate: '', lifespan: 730,
+    purchaseValue: '',
+    status: 'active', notes: '',
+    oilType: '', oilCapacity: '', oilInterval: 14, oilChangeHistory: [],
+    sparkHistory: [],
+  });
+  const [showAddOilChange, setShowAddOilChange] = useState(false);
+  const [oilChangeForm, setOilChangeForm] = useState({ date: new Date().toISOString().split('T')[0], boxes: 1, cost: '', notes: '' });
+  const [showAddSpark, setShowAddSpark] = useState(false);
+  const [sparkForm, setSparkForm] = useState({ date: new Date().toISOString().split('T')[0], brand: '', cost: '', notes: '' });
+  const [pumpBrands, setPumpBrands] = useState(() => {
+    const s = localStorage.getItem('pumpBrands');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddBrand, setShowAddBrand] = useState(false);
+  const [brandForm, setBrandForm] = useState({ name: '', rating: 'good', review: '', price: '' });
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -603,6 +631,96 @@ const App = () => {
   const totalInventoryCost = useMemo(() => medicines.reduce((s, m) => s + ((parseFloat(m.cost) || 0) * (parseFloat(m.boxes) || 0)), 0), [medicines]);
   const expiringMedicines = useMemo(() => medicines.filter(m => { const d = daysUntilExpiry(m.expiry); return d !== null && d <= 90; }), [medicines]);
 
+  // ===== دوال المواطير =====
+  const savePumps = useCallback((updated) => {
+    setPumps(updated);
+    localStorage.setItem('pumpData', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/pumps`), updated).catch(() => {});
+  }, [user]);
+
+  const savePumpBrands = useCallback((updated) => {
+    setPumpBrands(updated);
+    localStorage.setItem('pumpBrands', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/pumpBrands`), updated).catch(() => {});
+  }, [user]);
+
+  // تحميل بيانات المواطير من Firebase
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/pumps`), (snap) => { if (snap.exists()) setPumps(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/pumpBrands`), (snap) => { if (snap.exists()) setPumpBrands(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  // حساب الأيام المتبقية من العمر الافتراضي
+  const pumpRemainingDays = (purchaseDate, lifespan) => {
+    if (!purchaseDate) return null;
+    const elapsed = Math.floor((new Date() - new Date(purchaseDate)) / (1000 * 60 * 60 * 24));
+    return Math.max(0, lifespan - elapsed);
+  };
+
+  // حساب متى آخر تغيير زيت وكم باقي
+  const oilStatus = (pump) => {
+    const history = pump.oilChangeHistory || [];
+    if (history.length === 0) return { lastDate: null, daysAgo: null, daysLeft: null, due: false };
+    const sorted = [...history].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const lastDate = sorted[0].date;
+    const daysAgo = Math.floor((new Date() - new Date(lastDate)) / (1000 * 60 * 60 * 24));
+    const interval = parseInt(pump.oilInterval) || 14;
+    const daysLeft = interval - daysAgo;
+    return { lastDate, daysAgo, daysLeft, due: daysLeft <= 3 };
+  };
+
+  // حساب كمية الزيت المطلوبة
+  const oilRequired = (pump) => {
+    const capacity = parseFloat(pump.oilCapacity) || 0;
+    if (!capacity) return null;
+    const interval = parseInt(pump.oilInterval) || 14;
+    return { capacity, perChange: capacity, weeksInterval: (interval / 7).toFixed(1) };
+  };
+
+  const handleSavePump = () => {
+    if (!pumpForm.name) { alert('أدخل اسم الماطور'); return; }
+    let updated;
+    const pumpData = {
+      ...pumpForm,
+      lifespan: parseInt(pumpForm.lifespan) || 730,
+      oilInterval: parseInt(pumpForm.oilInterval) || 14,
+    };
+    if (editPumpId) {
+      updated = pumps.map(p => p.id === editPumpId ? { ...p, ...pumpData } : p);
+    } else {
+      updated = [...pumps, { id: `pump_${Date.now()}`, ...pumpData, oilChangeHistory: [], sparkHistory: [] }];
+    }
+    savePumps(updated);
+    setPumpForm({ name: '', brand: '', purchaseDate: '', lifespan: 730, purchaseValue: '', status: 'active', notes: '', oilType: '', oilCapacity: '', oilInterval: 14, oilChangeHistory: [], sparkHistory: [] });
+    setEditPumpId(null);
+    setShowAddPump(false);
+  };
+
+  const handleSaveOilChange = () => {
+    if (!oilChangeForm.date) { alert('أدخل التاريخ'); return; }
+    const pump = pumps.find(p => p.id === selectedPumpId);
+    if (!pump) return;
+    const history = pump.oilChangeHistory || [];
+    const newRecord = { id: `oil_${Date.now()}`, ...oilChangeForm, boxes: parseFloat(oilChangeForm.boxes) || 1, cost: parseFloat(oilChangeForm.cost) || 0 };
+    const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, oilChangeHistory: [...history, newRecord] } : p);
+    savePumps(updated);
+    setOilChangeForm({ date: new Date().toISOString().split('T')[0], boxes: 1, cost: '', notes: '' });
+    setShowAddOilChange(false);
+  };
+
+  const handleSaveSpark = () => {
+    if (!sparkForm.date) { alert('أدخل التاريخ'); return; }
+    const pump = pumps.find(p => p.id === selectedPumpId);
+    if (!pump) return;
+    const history = pump.sparkHistory || [];
+    const newRecord = { id: `spark_${Date.now()}`, ...sparkForm, cost: parseFloat(sparkForm.cost) || 0 };
+    const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, sparkHistory: [...history, newRecord] } : p);
+    savePumps(updated);
+    setSparkForm({ date: new Date().toISOString().split('T')[0], brand: '', cost: '', notes: '' });
+    setShowAddSpark(false);
+  };
+
   const ageReportAnimals = useMemo(() => {
     const minTotalMonths = (ageReportFilter.minYears * 12) + parseInt(ageReportFilter.minMonths || 0);
     let result = [];
@@ -881,6 +999,7 @@ const App = () => {
             <button onClick={() => { setShowProductionReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#c0392b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📈 تقرير الإنتاج</button>
             <button onClick={() => { setShowSalesReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#d4ac0d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>💰 المبيعات والأرباح</button>
             <button onClick={() => { setShowVetLibrary(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🩺 المكتبة البيطرية</button>
+            <button onClick={() => { setShowPumpSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1c2833', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>⚙️ مراقبة المواطير</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -1334,6 +1453,433 @@ const App = () => {
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal مراقبة المواطير ===== */}
+      {showPumpSystem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowPumpSystem(false)}>
+          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '760px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #1c2833, #2c3e50)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>⚙️ مراقبة المواطير المائية</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.8 }}>صيانة الزيت · البواجي · العمر الافتراضي · تقييم الماركات</p>
+              </div>
+              {pumps.some(p => { const r = pumpRemainingDays(p.purchaseDate, p.lifespan); return r !== null && r <= 180; }) && (
+                <div style={{ background: '#e74c3c', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>⚠️ ماطور يقترب من نهايته</div>
+              )}
+            </div>
+
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f5f6fa' }}>
+              {[
+                { key: 'pumps', label: '⚙️ المواطير' },
+                { key: 'oil', label: '🛢️ الزيت والصيانة' },
+                { key: 'spark', label: '⚡ البواجي' },
+                { key: 'brands', label: '⭐ تقييم الماركات' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setPumpTab(tab.key)} style={{ flex: 1, padding: '10px 4px', background: pumpTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: pumpTab === tab.key ? '3px solid #2c3e50' : '3px solid transparent', cursor: 'pointer', fontWeight: pumpTab === tab.key ? 'bold' : 'normal', color: pumpTab === tab.key ? '#1c2833' : '#888', fontSize: isMobile ? '10px' : '12px' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: '560px', overflowY: 'auto', padding: '15px 20px' }}>
+
+              {/* ===== تبويب المواطير ===== */}
+              {pumpTab === 'pumps' && (
+                <div>
+                  {/* إجمالي تكاليف كل المواطير */}
+                  {pumps.length > 0 && (() => {
+                    const totalPumpValue = pumps.reduce((s, p) => s + (parseFloat(p.purchaseValue) || 0), 0);
+                    const totalOil = pumps.reduce((s, p) => s + (p.oilChangeHistory || []).reduce((x, h) => x + (parseFloat(h.cost) || 0), 0), 0);
+                    const totalSpark = pumps.reduce((s, p) => s + (p.sparkHistory || []).reduce((x, h) => x + (parseFloat(h.cost) || 0), 0), 0);
+                    const grandTotal = totalPumpValue + totalOil + totalSpark;
+                    if (grandTotal === 0) return null;
+                    return (
+                      <div style={{ background: 'linear-gradient(135deg, #1c2833, #2c3e50)', borderRadius: '10px', padding: '14px', marginBottom: '15px', color: 'white' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '10px', opacity: 0.9 }}>💵 إجمالي تكاليف المواطير</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px,1fr))', gap: '8px' }}>
+                          {totalPumpValue > 0 && <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '8px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', fontSize: '15px' }}>{totalPumpValue.toLocaleString()}</div><div style={{ fontSize: '11px', opacity: 0.7 }}>ريال — قيمة الشراء</div></div>}
+                          {totalOil > 0 && <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '8px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', fontSize: '15px', color: '#f39c12' }}>{totalOil.toLocaleString()}</div><div style={{ fontSize: '11px', opacity: 0.7 }}>ريال — الزيت</div></div>}
+                          {totalSpark > 0 && <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '8px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', fontSize: '15px', color: '#f1c40f' }}>{totalSpark.toLocaleString()}</div><div style={{ fontSize: '11px', opacity: 0.7 }}>ريال — البواجي</div></div>}
+                          <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '8px', padding: '8px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.3)' }}><div style={{ fontWeight: 'bold', fontSize: '16px', color: '#2ecc71' }}>{grandTotal.toLocaleString()}</div><div style={{ fontSize: '11px', opacity: 0.8 }}>ريال — الإجمالي الكلي</div></div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {pumps.length === 0 && !showAddPump && (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '10px' }}>⚙️</div>
+                      <div>لا يوجد مواطير مسجلة — أضف ماطورك الأول</div>
+                    </div>
+                  )}
+
+                  {/* بطاقة كل ماطور */}
+                  {pumps.map(pump => {
+                    const remaining = pumpRemainingDays(pump.purchaseDate, pump.lifespan);
+                    const oil = oilStatus(pump);
+                    const pct = remaining !== null ? Math.round((remaining / pump.lifespan) * 100) : null;
+                    const lifeColor = pct === null ? '#bbb' : pct > 50 ? '#27ae60' : pct > 25 ? '#e67e22' : '#e74c3c';
+                    const elapsed = pump.purchaseDate ? Math.floor((new Date() - new Date(pump.purchaseDate)) / (1000 * 60 * 60 * 24)) : 0;
+                    const years = Math.floor(elapsed / 365);
+                    const months = Math.floor((elapsed % 365) / 30);
+                    const oilReq = oilRequired(pump);
+
+                    return (
+                      <div key={pump.id} style={{ background: pump.status === 'backup' ? '#f0f4ff' : '#f9fff9', border: `2px solid ${pump.status === 'active' ? '#27ae60' : pump.status === 'backup' ? '#2471a3' : '#e74c3c'}`, borderRadius: '12px', padding: '15px', marginBottom: '15px' }}>
+                        {/* رأس البطاقة */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '16px', color: '#1c2833', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              ⚙️ {pump.name}
+                              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '8px', fontWeight: 'bold', background: pump.status === 'active' ? '#d5f5e3' : pump.status === 'backup' ? '#d6eaf8' : '#fadbd8', color: pump.status === 'active' ? '#27ae60' : pump.status === 'backup' ? '#2471a3' : '#e74c3c' }}>
+                                {pump.status === 'active' ? '✅ رئيسي' : pump.status === 'backup' ? '🔵 احتياطي' : '🔴 متوقف'}
+                              </span>
+                            </div>
+                            {pump.brand && <div style={{ fontSize: '12px', color: '#888', marginTop: '3px' }}>الماركة: {pump.brand}</div>}
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button onClick={() => { setSelectedPumpId(pump.id); setPumpTab('oil'); }} style={{ background: '#fff3e0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>🛢️ زيت</button>
+                            <button onClick={() => { setSelectedPumpId(pump.id); setPumpTab('spark'); }} style={{ background: '#fff9e6', border: '1px solid #d4ac0d', color: '#b7950b', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>⚡ بوجي</button>
+                            <button onClick={() => { setPumpForm({ name: pump.name, brand: pump.brand || '', purchaseDate: pump.purchaseDate || '', lifespan: pump.lifespan, purchaseValue: pump.purchaseValue || '', status: pump.status, notes: pump.notes || '', oilType: pump.oilType || '', oilCapacity: pump.oilCapacity || '', oilInterval: pump.oilInterval || 14 }); setEditPumpId(pump.id); setShowAddPump(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { if (window.confirm(`حذف ماطور "${pump.name}"؟`)) savePumps(pumps.filter(p => p.id !== pump.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
+                          </div>
+                        </div>
+
+                        {/* العمر الافتراضي */}
+                        {pump.purchaseDate && (
+                          <div style={{ marginBottom: '12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px' }}>
+                              <span style={{ color: '#666' }}>⏳ العمر الافتراضي ({(pump.lifespan / 365).toFixed(1)} سنة)</span>
+                              <span style={{ fontWeight: 'bold', color: lifeColor }}>
+                                {remaining === 0 ? '⚠️ انتهى العمر الافتراضي!' : `باقي ${remaining} يوم (${Math.floor(remaining/30)} شهر)`}
+                              </span>
+                            </div>
+                            <div style={{ height: '10px', background: '#eee', borderRadius: '5px', overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: lifeColor, borderRadius: '5px', transition: 'width 0.3s' }} />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#aaa', marginTop: '3px' }}>
+                              <span>اشتري: {new Date(pump.purchaseDate).toLocaleDateString('ar-SA')}</span>
+                              <span>عمره الحالي: {years > 0 ? `${years} سنة ` : ''}{months > 0 ? `${months} شهر` : ''}</span>
+                              <span>ينتهي: {new Date(new Date(pump.purchaseDate).getTime() + pump.lifespan * 86400000).toLocaleDateString('ar-SA')}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* حالة الزيت */}
+                        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                          <div style={{ background: oil.due ? '#fff3e0' : '#f9f9f9', borderRadius: '8px', padding: '8px 10px', border: oil.due ? '1px solid #e67e22' : '1px solid #eee' }}>
+                            <div style={{ fontWeight: 'bold', color: '#555', marginBottom: '4px' }}>🛢️ حالة الزيت</div>
+                            {oil.lastDate ? (
+                              <>
+                                <div>آخر تغيير: {new Date(oil.lastDate).toLocaleDateString('ar-SA')} ({oil.daysAgo} يوم)</div>
+                                <div style={{ color: oil.daysLeft <= 0 ? '#e74c3c' : oil.daysLeft <= 3 ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>
+                                  {oil.daysLeft <= 0 ? `⚠️ متأخر ${Math.abs(oil.daysLeft)} يوم!` : `باقي ${oil.daysLeft} يوم للتغيير`}
+                                </div>
+                              </>
+                            ) : <div style={{ color: '#bbb' }}>لم يُسجَّل تغيير زيت بعد</div>}
+                            {pump.oilType && <div style={{ color: '#888', marginTop: '3px' }}>النوع: {pump.oilType}</div>}
+                          </div>
+                          {oilReq && (
+                            <div style={{ background: '#f0f4ff', borderRadius: '8px', padding: '8px 10px', border: '1px solid #d6eaf8' }}>
+                              <div style={{ fontWeight: 'bold', color: '#2471a3', marginBottom: '4px' }}>🧮 احتساب الزيت</div>
+                              <div>السعة: {oilReq.capacity} لتر</div>
+                              <div>كل تغيير: {oilReq.capacity} لتر ({oilReq.weeksInterval} أسبوع)</div>
+                              <div style={{ color: '#2471a3' }}>علبة 2L → تكفي {(2 / oilReq.capacity).toFixed(1)} مرة</div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* آخر بوجي */}
+                        {(pump.sparkHistory || []).length > 0 && (
+                          <div style={{ marginTop: '8px', background: '#fffbf0', borderRadius: '8px', padding: '8px 10px', fontSize: '12px', border: '1px solid #f0e68c' }}>
+                            ⚡ آخر تغيير بوجي: {new Date([...pump.sparkHistory].sort((a, b) => new Date(b.date) - new Date(a.date))[0].date).toLocaleDateString('ar-SA')}
+                            {' · '}الماركة: {[...pump.sparkHistory].sort((a, b) => new Date(b.date) - new Date(a.date))[0].brand || 'غير محدد'}
+                          </div>
+                        )}
+
+                        {pump.notes && <div style={{ marginTop: '8px', fontSize: '12px', color: '#888', background: '#f9f9f9', padding: '6px 10px', borderRadius: '6px' }}>📝 {pump.notes}</div>}
+
+                        {/* ملخص التكاليف */}
+                        {(() => {
+                          const oilCost = (pump.oilChangeHistory || []).reduce((s, h) => s + (parseFloat(h.cost) || 0), 0);
+                          const sparkCost = (pump.sparkHistory || []).reduce((s, h) => s + (parseFloat(h.cost) || 0), 0);
+                          const pumpValue = parseFloat(pump.purchaseValue) || 0;
+                          const total = pumpValue + oilCost + sparkCost;
+                          if (total === 0) return null;
+                          return (
+                            <div style={{ marginTop: '10px', background: '#f0f4ff', borderRadius: '8px', padding: '10px 13px', border: '1px solid #d6eaf8' }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#2471a3', marginBottom: '7px' }}>💵 ملخص تكاليف {pump.name}</div>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px,1fr))', gap: '6px', fontSize: '12px' }}>
+                                {pumpValue > 0 && <div style={{ background: 'white', borderRadius: '6px', padding: '6px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#1c2833' }}>{pumpValue.toLocaleString()} ر</div><div style={{ color: '#888', fontSize: '11px' }}>قيمة الشراء</div></div>}
+                                {oilCost > 0 && <div style={{ background: 'white', borderRadius: '6px', padding: '6px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e67e22' }}>{oilCost.toLocaleString()} ر</div><div style={{ color: '#888', fontSize: '11px' }}>تكلفة الزيت</div></div>}
+                                {sparkCost > 0 && <div style={{ background: 'white', borderRadius: '6px', padding: '6px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#d4ac0d' }}>{sparkCost.toLocaleString()} ر</div><div style={{ color: '#888', fontSize: '11px' }}>تكلفة البواجي</div></div>}
+                                <div style={{ background: '#2471a3', borderRadius: '6px', padding: '6px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: 'white' }}>{total.toLocaleString()} ر</div><div style={{ color: '#d6eaf8', fontSize: '11px' }}>الإجمالي</div></div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
+
+                  {/* نموذج إضافة ماطور */}
+                  {showAddPump ? (
+                    <div style={{ background: '#f5f6fa', border: '2px solid #2c3e50', borderRadius: '10px', padding: '15px' }}>
+                      <h4 style={{ color: '#1c2833', margin: '0 0 12px' }}>{editPumpId ? '✏️ تعديل ماطور' : '➕ إضافة ماطور'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم/رقم الماطور *</label><input value={pumpForm.name} onChange={e => setPumpForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: الماطور الرئيسي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الماركة</label><input value={pumpForm.brand} onChange={e => setPumpForm(p => ({ ...p, brand: e.target.value }))} placeholder="مثال: Honda, Yamaha" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء</label><input type="date" value={pumpForm.purchaseDate} onChange={e => setPumpForm(p => ({ ...p, purchaseDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 قيمة شراء الماطور (ريال)</label><input type="number" min="0" value={pumpForm.purchaseValue} onChange={e => setPumpForm(p => ({ ...p, purchaseValue: e.target.value }))} placeholder="مثال: 1500" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>العمر الافتراضي (يوم)</label>
+                          <select value={pumpForm.lifespan} onChange={e => setPumpForm(p => ({ ...p, lifespan: parseInt(e.target.value) }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value={365}>سنة (365 يوم)</option>
+                            <option value={730}>سنتان (730 يوم)</option>
+                            <option value={1095}>3 سنوات</option>
+                            <option value={1460}>4 سنوات</option>
+                            <option value={1825}>5 سنوات</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الحالة</label>
+                          <select value={pumpForm.status} onChange={e => setPumpForm(p => ({ ...p, status: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="active">✅ رئيسي (يعمل)</option>
+                            <option value="backup">🔵 احتياطي</option>
+                            <option value="stopped">🔴 متوقف</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع الزيت</label><input value={pumpForm.oilType} onChange={e => setPumpForm(p => ({ ...p, oilType: e.target.value }))} placeholder="مثال: 10W-40, SAE 30" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>سعة الزيت (لتر)</label><input type="number" min="0" step="0.1" value={pumpForm.oilCapacity} onChange={e => setPumpForm(p => ({ ...p, oilCapacity: e.target.value }))} placeholder="مثال: 0.3" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>فترة تغيير الزيت (يوم)</label>
+                          <select value={pumpForm.oilInterval} onChange={e => setPumpForm(p => ({ ...p, oilInterval: parseInt(e.target.value) }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value={7}>كل أسبوع</option>
+                            <option value={14}>كل أسبوعين</option>
+                            <option value={21}>كل 3 أسابيع</option>
+                            <option value={30}>كل شهر</option>
+                            <option value={60}>كل شهرين</option>
+                          </select>
+                        </div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={pumpForm.notes} onChange={e => setPumpForm(p => ({ ...p, notes: e.target.value }))} placeholder="أي ملاحظات..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSavePump} style={{ background: '#1c2833', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddPump(false); setEditPumpId(null); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddPump(true)} style={{ width: '100%', padding: '11px', background: '#2c3e50', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '10px' }}>➕ إضافة ماطور</button>
+                  )}
+                </div>
+              )}
+
+              {/* ===== تبويب الزيت والصيانة ===== */}
+              {pumpTab === 'oil' && (
+                <div>
+                  {/* اختيار الماطور */}
+                  <div style={{ marginBottom: '15px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>اختر الماطور:</label>
+                    <select value={selectedPumpId || ''} onChange={e => setSelectedPumpId(e.target.value)} style={{ padding: '9px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                      <option value="">— اختر —</option>
+                      {pumps.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+
+                  {selectedPumpId && (() => {
+                    const pump = pumps.find(p => p.id === selectedPumpId);
+                    if (!pump) return null;
+                    const history = [...(pump.oilChangeHistory || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+                    const oil = oilStatus(pump);
+                    const oilReq = oilRequired(pump);
+                    return (
+                      <div>
+                        {/* معلومات الزيت */}
+                        {oilReq && (
+                          <div style={{ background: '#fff8e1', border: '1px solid #f0e68c', borderRadius: '10px', padding: '12px', marginBottom: '15px' }}>
+                            <div style={{ fontWeight: 'bold', color: '#b7950b', marginBottom: '8px' }}>🧮 حسابات الزيت — {pump.name}</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px,1fr))', gap: '8px', fontSize: '12px' }}>
+                              <div style={{ background: 'white', borderRadius: '6px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e67e22' }}>{oilReq.capacity} L</div><div style={{ color: '#888' }}>سعة الزيت</div></div>
+                              <div style={{ background: 'white', borderRadius: '6px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#2471a3' }}>كل {pump.oilInterval} يوم</div><div style={{ color: '#888' }}>فترة التغيير</div></div>
+                              <div style={{ background: 'white', borderRadius: '6px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#117a65' }}>{(2 / oilReq.capacity).toFixed(1)}x</div><div style={{ color: '#888' }}>علبة 2L تكفي</div></div>
+                              <div style={{ background: oil.due ? '#ffe8e8' : '#e8f8f0', borderRadius: '6px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: oil.due ? '#e74c3c' : '#27ae60' }}>{oil.daysLeft !== null ? (oil.daysLeft <= 0 ? 'متأخر!' : `${oil.daysLeft} يوم`) : '—'}</div><div style={{ color: '#888' }}>باقي للتغيير</div></div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* إضافة تغيير زيت */}
+                        {showAddOilChange ? (
+                          <div style={{ background: '#fff3e0', border: '2px solid #e67e22', borderRadius: '10px', padding: '14px', marginBottom: '15px' }}>
+                            <h4 style={{ color: '#e67e22', margin: '0 0 10px' }}>🛢️ تسجيل تغيير زيت</h4>
+                            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                              <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 التاريخ</label><input type="date" value={oilChangeForm.date} onChange={e => setOilChangeForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                              <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>عدد العلب/اللترات</label><input type="number" min="0" step="0.1" value={oilChangeForm.boxes} onChange={e => setOilChangeForm(p => ({ ...p, boxes: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                              <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>التكلفة (ريال)</label><input type="number" min="0" value={oilChangeForm.cost} onChange={e => setOilChangeForm(p => ({ ...p, cost: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                              <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>ملاحظات</label><input value={oilChangeForm.notes} onChange={e => setOilChangeForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' }}>
+                              <button onClick={handleSaveOilChange} style={{ background: '#e67e22', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                              <button onClick={() => setShowAddOilChange(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button onClick={() => setShowAddOilChange(true)} style={{ width: '100%', padding: '10px', background: '#e67e22', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '15px' }}>🛢️ تسجيل تغيير زيت</button>
+                        )}
+
+                        {/* سجل تغييرات الزيت */}
+                        <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#555', marginBottom: '8px' }}>📋 سجل تغييرات الزيت ({history.length})</div>
+                        {history.length === 0 ? <div style={{ color: '#bbb', textAlign: 'center', padding: '20px' }}>لا يوجد سجلات بعد</div> : history.map((h, i) => (
+                          <div key={h.id} style={{ background: i === 0 ? '#fff8e1' : 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ fontSize: '13px' }}>
+                              <span style={{ fontWeight: 'bold' }}>{new Date(h.date).toLocaleDateString('ar-SA')}</span>
+                              {i === 0 && <span style={{ marginRight: '6px', fontSize: '11px', background: '#e67e22', color: 'white', padding: '1px 5px', borderRadius: '4px' }}>آخر تغيير</span>}
+                              <span style={{ color: '#888', fontSize: '12px', marginRight: '8px' }}>{h.boxes} {pump.oilCapacity ? 'لتر' : 'علبة'}</span>
+                              {h.cost > 0 && <span style={{ color: '#27ae60', fontSize: '12px' }}>💰 {h.cost} ر</span>}
+                              {h.notes && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>{h.notes}</div>}
+                            </div>
+                            <button onClick={() => { if (window.confirm('حذف هذا السجل؟')) { const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, oilChangeHistory: p.oilChangeHistory.filter(x => x.id !== h.id) } : p); savePumps(updated); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* ===== تبويب البواجي ===== */}
+              {pumpTab === 'spark' && (
+                <div>
+                  <div style={{ marginBottom: '15px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>اختر الماطور:</label>
+                    <select value={selectedPumpId || ''} onChange={e => setSelectedPumpId(e.target.value)} style={{ padding: '9px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                      <option value="">— اختر —</option>
+                      {pumps.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+
+                  {selectedPumpId && (() => {
+                    const pump = pumps.find(p => p.id === selectedPumpId);
+                    if (!pump) return null;
+                    const history = [...(pump.sparkHistory || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+                    const last = history[0];
+                    const daysSince = last ? Math.floor((new Date() - new Date(last.date)) / (1000 * 60 * 60 * 24)) : null;
+                    return (
+                      <div>
+                        {last && (
+                          <div style={{ background: '#fffbf0', border: '1px solid #f0e68c', borderRadius: '10px', padding: '12px', marginBottom: '15px' }}>
+                            <div style={{ fontWeight: 'bold', color: '#b7950b', marginBottom: '6px' }}>⚡ حالة البوجي — {pump.name}</div>
+                            <div style={{ fontSize: '13px', color: '#555' }}>
+                              آخر تغيير: <strong>{new Date(last.date).toLocaleDateString('ar-SA')}</strong> ({daysSince} يوم)
+                              {last.brand && <> · الماركة: <strong>{last.brand}</strong></>}
+                              {last.cost > 0 && <> · التكلفة: <strong style={{ color: '#27ae60' }}>{last.cost} ر</strong></>}
+                            </div>
+                          </div>
+                        )}
+
+                        {showAddSpark ? (
+                          <div style={{ background: '#fffbf0', border: '2px solid #d4ac0d', borderRadius: '10px', padding: '14px', marginBottom: '15px' }}>
+                            <h4 style={{ color: '#b7950b', margin: '0 0 10px' }}>⚡ تسجيل تغيير بوجي</h4>
+                            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                              <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 التاريخ</label><input type="date" value={sparkForm.date} onChange={e => setSparkForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                              <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>ماركة البوجي</label><input value={sparkForm.brand} onChange={e => setSparkForm(p => ({ ...p, brand: e.target.value }))} placeholder="مثال: NGK, Bosch" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                              <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>التكلفة (ريال)</label><input type="number" min="0" value={sparkForm.cost} onChange={e => setSparkForm(p => ({ ...p, cost: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                              <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>ملاحظات</label><input value={sparkForm.notes} onChange={e => setSparkForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' }}>
+                              <button onClick={handleSaveSpark} style={{ background: '#d4ac0d', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                              <button onClick={() => setShowAddSpark(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button onClick={() => setShowAddSpark(true)} style={{ width: '100%', padding: '10px', background: '#d4ac0d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '15px' }}>⚡ تسجيل تغيير بوجي</button>
+                        )}
+
+                        <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#555', marginBottom: '8px' }}>📋 سجل البواجي ({history.length})</div>
+                        {history.length === 0 ? <div style={{ color: '#bbb', textAlign: 'center', padding: '20px' }}>لا يوجد سجلات بعد</div> : history.map((h, i) => (
+                          <div key={h.id} style={{ background: i === 0 ? '#fffbf0' : 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ fontSize: '13px' }}>
+                              <span style={{ fontWeight: 'bold' }}>{new Date(h.date).toLocaleDateString('ar-SA')}</span>
+                              {i === 0 && <span style={{ marginRight: '6px', fontSize: '11px', background: '#d4ac0d', color: 'white', padding: '1px 5px', borderRadius: '4px' }}>آخر تغيير</span>}
+                              {h.brand && <span style={{ color: '#888', fontSize: '12px', marginRight: '8px' }}>⚡ {h.brand}</span>}
+                              {h.cost > 0 && <span style={{ color: '#27ae60', fontSize: '12px' }}>💰 {h.cost} ر</span>}
+                              {h.notes && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>{h.notes}</div>}
+                            </div>
+                            <button onClick={() => { if (window.confirm('حذف؟')) { const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, sparkHistory: p.sparkHistory.filter(x => x.id !== h.id) } : p); savePumps(updated); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* ===== تبويب تقييم الماركات ===== */}
+              {pumpTab === 'brands' && (
+                <div>
+                  {showAddBrand ? (
+                    <div style={{ background: '#f5f6fa', border: '2px solid #2c3e50', borderRadius: '10px', padding: '15px', marginBottom: '15px' }}>
+                      <h4 style={{ color: '#1c2833', margin: '0 0 12px' }}>➕ إضافة ماركة ماطور</h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم الماركة *</label><input value={brandForm.name} onChange={e => setBrandForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: Honda, Yamaha, ريد, كرياتور" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>التقييم</label>
+                          <select value={brandForm.rating} onChange={e => setBrandForm(p => ({ ...p, rating: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="excellent">⭐⭐⭐⭐⭐ ممتاز</option>
+                            <option value="good">⭐⭐⭐⭐ جيد</option>
+                            <option value="average">⭐⭐⭐ متوسط</option>
+                            <option value="poor">⭐⭐ ضعيف</option>
+                            <option value="bad">⭐ سيء</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>السعر التقريبي (ريال)</label><input type="number" value={brandForm.price} onChange={e => setBrandForm(p => ({ ...p, price: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 رأيك من التجربة</label><textarea value={brandForm.review} onChange={e => setBrandForm(p => ({ ...p, review: e.target.value }))} placeholder="اكتب تجربتك مع هذه الماركة — إيجابيات وسلبيات..." rows={3} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={() => { if (!brandForm.name) { alert('أدخل اسم الماركة'); return; } savePumpBrands([...pumpBrands, { id: `br_${Date.now()}`, ...brandForm, price: parseFloat(brandForm.price) || 0 }]); setBrandForm({ name: '', rating: 'good', review: '', price: '' }); setShowAddBrand(false); }} style={{ background: '#2c3e50', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => setShowAddBrand(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddBrand(true)} style={{ width: '100%', padding: '11px', background: '#2c3e50', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '15px' }}>➕ إضافة ماركة وتقييمها</button>
+                  )}
+
+                  {pumpBrands.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>
+                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>⭐</div>
+                      <div>أضف تقييماتك للماركات من تجربتك الشخصية</div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {[...pumpBrands].sort((a, b) => { const order = { excellent: 0, good: 1, average: 2, poor: 3, bad: 4 }; return order[a.rating] - order[b.rating]; }).map(brand => {
+                        const stars = { excellent: '⭐⭐⭐⭐⭐', good: '⭐⭐⭐⭐', average: '⭐⭐⭐', poor: '⭐⭐', bad: '⭐' };
+                        const ratingColors = { excellent: '#27ae60', good: '#2471a3', average: '#e67e22', poor: '#e74c3c', bad: '#922b21' };
+                        const ratingBg = { excellent: '#d5f5e3', good: '#d6eaf8', average: '#fdebd0', poor: '#fadbd8', bad: '#f5b7b1' };
+                        return (
+                          <div key={brand.id} style={{ background: 'white', border: `1.5px solid ${ratingColors[brand.rating]}40`, borderRadius: '10px', padding: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                              <div>
+                                <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#1c2833' }}>⚙️ {brand.name}</div>
+                                {brand.price > 0 && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>السعر: ~{brand.price} ريال</div>}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ background: ratingBg[brand.rating], color: ratingColors[brand.rating], fontSize: '12px', padding: '3px 8px', borderRadius: '8px', fontWeight: 'bold' }}>{stars[brand.rating]}</span>
+                                <button onClick={() => { if (window.confirm('حذف؟')) savePumpBrands(pumpBrands.filter(b => b.id !== brand.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                              </div>
+                            </div>
+                            {brand.review && <div style={{ fontSize: '13px', color: '#555', background: '#f9f9f9', borderRadius: '6px', padding: '8px 10px', lineHeight: '1.6' }}>{brand.review}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
+              <button onClick={() => setShowPumpSystem(false)} style={{ width: '100%', background: '#2c3e50', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
