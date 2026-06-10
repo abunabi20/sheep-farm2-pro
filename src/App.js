@@ -127,7 +127,10 @@ const App = () => {
   });
   const [showAddMedicine, setShowAddMedicine] = useState(false);
   const [editMedicineId, setEditMedicineId] = useState(null);
-  const [medicineForm, setMedicineForm] = useState({ name: '', boxes: '', expiry: '', cost: '', unit: 'علبة' });
+  const [medicineForm, setMedicineForm] = useState({ name: '', unit: 'علبة', cost: '' });
+  const [showAddMedicineBatch, setShowAddMedicineBatch] = useState(false);
+  const [medicineBatchId, setMedicineBatchId] = useState(null);
+  const [medicineBatchForm, setMedicineBatchForm] = useState({ boxes: '', expiry: '', notes: '' });
   // سجل العلاجات
   const [treatmentRecords, setTreatmentRecords] = useState(() => {
     const saved = localStorage.getItem('vetTreatments');
@@ -737,15 +740,30 @@ const App = () => {
     if (!medicineForm.name) { alert('أدخل اسم الدواء'); return; }
     let updated;
     if (editMedicineId) {
-      updated = medicines.map(m => m.id === editMedicineId ? { ...m, ...medicineForm, boxes: parseFloat(medicineForm.boxes) || 0, cost: parseFloat(medicineForm.cost) || 0 } : m);
+      // تعديل الاسم والوحدة والتكلفة فقط
+      updated = medicines.map(m => m.id === editMedicineId ? { ...m, name: medicineForm.name, unit: medicineForm.unit, cost: parseFloat(medicineForm.cost) || 0 } : m);
     } else {
-      const newMed = { id: `m_${Date.now()}`, ...medicineForm, boxes: parseFloat(medicineForm.boxes) || 0, cost: parseFloat(medicineForm.cost) || 0 };
+      // إضافة دواء جديد بدون دفعات — تُضاف لاحقاً
+      const newMed = { id: `m_${Date.now()}`, name: medicineForm.name, unit: medicineForm.unit, cost: parseFloat(medicineForm.cost) || 0, batches: [] };
       updated = [...medicines, newMed];
     }
     saveMedicines(updated);
-    setMedicineForm({ name: '', boxes: '', expiry: '', cost: '', unit: 'علبة' });
+    setMedicineForm({ name: '', unit: 'علبة', cost: '' });
     setEditMedicineId(null);
     setShowAddMedicine(false);
+  };
+
+  const handleSaveMedicineBatch = () => {
+    if (!medicineBatchForm.boxes || !medicineBatchForm.expiry) { alert('أدخل الكمية وتاريخ الانتهاء'); return; }
+    const med = medicines.find(m => m.id === medicineBatchId);
+    if (!med) return;
+    const batches = med.batches || [];
+    const newBatch = { id: `batch_${Date.now()}`, boxes: parseFloat(medicineBatchForm.boxes) || 0, expiry: medicineBatchForm.expiry, notes: medicineBatchForm.notes };
+    const updated = medicines.map(m => m.id === medicineBatchId ? { ...m, batches: [...batches, newBatch] } : m);
+    saveMedicines(updated);
+    setMedicineBatchForm({ boxes: '', expiry: '', notes: '' });
+    setShowAddMedicineBatch(false);
+    setMedicineBatchId(null);
   };
 
   const handleDeleteMedicine = (id) => {
@@ -776,8 +794,32 @@ const App = () => {
   };
 
   // إجمالي تكلفة المخزون
-  const totalInventoryCost = useMemo(() => medicines.reduce((s, m) => s + ((parseFloat(m.cost) || 0) * (parseFloat(m.boxes) || 0)), 0), [medicines]);
-  const expiringMedicines = useMemo(() => medicines.filter(m => { const d = daysUntilExpiry(m.expiry); return d !== null && d <= 90; }), [medicines]);
+  // إجمالي المخزون والتكلفة مع دعم الدفعات
+  const totalInventoryCost = useMemo(() => medicines.reduce((s, m) => {
+    const batches = m.batches || [];
+    if (batches.length > 0) return s + batches.reduce((bs, b) => bs + ((parseFloat(m.cost) || 0) * (parseFloat(b.boxes) || 0)), 0);
+    return s + ((parseFloat(m.cost) || 0) * (parseFloat(m.boxes) || 0));
+  }, 0), [medicines]);
+
+  // الدفعات المنتهية قريباً (خلال 90 يوم) — تنبيه لكل دفعة منفصلة
+  const expiringBatches = useMemo(() => {
+    const result = [];
+    medicines.forEach(med => {
+      const batches = med.batches || [];
+      if (batches.length > 0) {
+        batches.forEach(batch => {
+          const d = daysUntilExpiry(batch.expiry);
+          if (d !== null && d <= 90) result.push({ ...batch, medicineName: med.name, medicineId: med.id, unit: med.unit });
+        });
+      } else {
+        const d = daysUntilExpiry(med.expiry);
+        if (d !== null && d <= 90) result.push({ id: med.id, boxes: med.boxes, expiry: med.expiry, medicineName: med.name, medicineId: med.id, unit: med.unit, notes: '' });
+      }
+    });
+    return result.sort((a, b) => new Date(a.expiry) - new Date(b.expiry));
+  }, [medicines]);
+
+  const expiringMedicines = expiringBatches; // للتوافق مع الكود القديم
 
   // ===== دوال المواطير =====
   const savePumps = useCallback((updated) => {
@@ -1429,11 +1471,20 @@ const App = () => {
         alerts.push({ id: `petrol-${pump.id}`, system: '⛽ بنزين المواطير', item: pump.name, msg: `يحتاج تعبئة بنزين — باقي تقريباً ${pump.daysLeft} يوم`, urgency: pump.daysLeft === 0 ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('petrol'); } });
     });
 
-    // 💊 الأدوية — انتهاء صلاحية
+    // 💊 الأدوية — انتهاء صلاحية (بالدفعات)
     medicines.forEach(med => {
-      const d = daysUntilExpiry(med.expiry);
-      if (d !== null && d <= 90)
-        alerts.push({ id: `med-${med.id}`, system: '💊 المكتبة البيطرية', item: med.name, msg: d <= 0 ? 'انتهت الصلاحية!' : `تنتهي الصلاحية خلال ${d} يوم`, urgency: d <= 0 ? 'critical' : d <= 30 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowVetLibrary(true); setVetTab('inventory'); } });
+      const batches = med.batches || [];
+      if (batches.length > 0) {
+        batches.forEach((batch, bi) => {
+          const d = daysUntilExpiry(batch.expiry);
+          if (d !== null && d <= 90)
+            alerts.push({ id: `med-${med.id}-${batch.id}`, system: '💊 المكتبة البيطرية', item: `${med.name} — دفعة ${bi + 1} (${batch.boxes} ${med.unit})`, msg: d <= 0 ? 'انتهت الصلاحية!' : `تنتهي الصلاحية خلال ${d} يوم`, urgency: d <= 0 ? 'critical' : d <= 30 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowVetLibrary(true); setVetTab('inventory'); } });
+        });
+      } else {
+        const d = daysUntilExpiry(med.expiry);
+        if (d !== null && d <= 90)
+          alerts.push({ id: `med-${med.id}`, system: '💊 المكتبة البيطرية', item: med.name, msg: d <= 0 ? 'انتهت الصلاحية!' : `تنتهي الصلاحية خلال ${d} يوم`, urgency: d <= 0 ? 'critical' : d <= 30 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowVetLibrary(true); setVetTab('inventory'); } });
+      }
     });
 
     // 🌾 الأعلاف — مخزون منخفض
@@ -5148,75 +5199,113 @@ const App = () => {
                     ))}
                   </div>
 
-                  {/* قائمة الأدوية */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+                  {/* قائمة الأدوية مع الدفعات */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
                     {medicines.map(med => {
-                      const days = daysUntilExpiry(med.expiry);
-                      const isExpiring = days !== null && days <= 90;
-                      const isExpired = days !== null && days <= 0;
-                      const totalCost = (parseFloat(med.cost) || 0) * (parseFloat(med.boxes) || 0);
+                      const batches = med.batches || [];
+                      const totalBoxes = batches.length > 0 ? batches.reduce((s, b) => s + (parseFloat(b.boxes) || 0), 0) : (parseFloat(med.boxes) || 0);
+                      const totalCost = (parseFloat(med.cost) || 0) * totalBoxes;
+                      const hasExpiring = batches.some(b => { const d = daysUntilExpiry(b.expiry); return d !== null && d <= 90; });
+                      const hasExpired = batches.some(b => { const d = daysUntilExpiry(b.expiry); return d !== null && d <= 0; });
+
                       return (
-                        <div key={med.id} style={{ background: isExpired ? '#fff0f0' : isExpiring ? '#fff8f0' : 'white', border: `1.5px solid ${isExpired ? '#e74c3c' : isExpiring ? '#e67e22' : '#eee'}`, borderRadius: '10px', padding: '12px 15px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px' }}>
+                        <div key={med.id} style={{ background: hasExpired ? '#fff0f0' : hasExpiring ? '#fff8f0' : 'white', border: `1.5px solid ${hasExpired ? '#e74c3c' : hasExpiring ? '#e67e22' : '#eee'}`, borderRadius: '10px', padding: '12px 15px' }}>
+                          {/* رأس الدواء */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px', marginBottom: batches.length > 0 ? '10px' : '0' }}>
                             <div style={{ flex: 1 }}>
-                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                 💊 {med.name}
-                                {isExpired && <span style={{ background: '#e74c3c', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>منتهي!</span>}
-                                {isExpiring && !isExpired && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>ينتهي قريباً</span>}
+                                {hasExpired && <span style={{ background: '#e74c3c', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>⚠️ دفعة منتهية!</span>}
+                                {hasExpiring && !hasExpired && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>دفعة تنتهي قريباً</span>}
                               </div>
-                              <div style={{ display: 'flex', gap: '14px', marginTop: '6px', flexWrap: 'wrap', fontSize: '12px', color: '#666' }}>
-                                <span>📦 الكمية: <strong>{med.boxes} {med.unit}</strong></span>
-                                <span>💵 تكلفة الوحدة: <strong>{med.cost} ر</strong></span>
-                                <span>🧾 الإجمالي: <strong style={{ color: '#117a65' }}>{totalCost.toLocaleString()} ر</strong></span>
-                                {med.expiry && (
-                                  <span style={{ color: isExpired ? '#e74c3c' : isExpiring ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>
-                                    📅 الانتهاء: {new Date(med.expiry).toLocaleDateString('ar-SA')}
-                                    {days !== null && ` (${isExpired ? 'منتهي منذ ' + Math.abs(days) + ' يوم' : 'باقي ' + days + ' يوم'})`}
-                                  </span>
-                                )}
+                              <div style={{ display: 'flex', gap: '14px', marginTop: '5px', flexWrap: 'wrap', fontSize: '12px', color: '#666' }}>
+                                <span>📦 إجمالي: <strong>{totalBoxes} {med.unit}</strong></span>
+                                <span>💵 سعر الوحدة: <strong>{med.cost} ر</strong></span>
+                                <span>🧾 <strong style={{ color: '#117a65' }}>{totalCost.toLocaleString()} ر</strong></span>
+                                <span style={{ color: '#888' }}>{batches.length} دفعة</span>
                               </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '6px' }}>
-                              <button onClick={() => { setMedicineForm({ name: med.name, boxes: med.boxes, expiry: med.expiry || '', cost: med.cost, unit: med.unit || 'علبة' }); setEditMedicineId(med.id); setShowAddMedicine(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                              <button onClick={() => { setMedicineBatchId(med.id); setShowAddMedicineBatch(true); }} style={{ background: '#e8f5e9', border: '1px solid #27ae60', color: '#27ae60', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>📦 دفعة</button>
+                              <button onClick={() => { setMedicineForm({ name: med.name, unit: med.unit || 'علبة', cost: med.cost || '' }); setEditMedicineId(med.id); setShowAddMedicine(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
                               <button onClick={() => handleDeleteMedicine(med.id)} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
                             </div>
                           </div>
+
+                          {/* الدفعات */}
+                          {batches.length > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                              {batches.map((batch, bi) => {
+                                const d = daysUntilExpiry(batch.expiry);
+                                const bExpired = d !== null && d <= 0;
+                                const bExpiring = d !== null && d <= 90 && d > 0;
+                                return (
+                                  <div key={batch.id} style={{ background: bExpired ? '#fff0f0' : bExpiring ? '#fff8f0' : '#f9f9f9', border: `1px solid ${bExpired ? '#e74c3c' : bExpiring ? '#e67e22' : '#ddd'}`, borderRadius: '7px', padding: '7px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                                    <div style={{ fontSize: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                      <span style={{ background: '#e8eaf6', color: '#3949ab', borderRadius: '4px', padding: '1px 6px', fontSize: '11px', fontWeight: 'bold' }}>دفعة {bi + 1}</span>
+                                      <span><strong>{batch.boxes}</strong> {med.unit}</span>
+                                      <span style={{ color: bExpired ? '#e74c3c' : bExpiring ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>
+                                        📅 {new Date(batch.expiry).toLocaleDateString('ar-SA')}
+                                        {d !== null && <span style={{ fontSize: '11px', marginRight: '4px' }}>({bExpired ? `منتهي منذ ${Math.abs(d)} يوم` : `باقي ${d} يوم`})</span>}
+                                      </span>
+                                      {batch.notes && <span style={{ color: '#888', fontSize: '11px' }}>— {batch.notes}</span>}
+                                    </div>
+                                    <button onClick={() => {
+                                      if (!window.confirm('حذف هذه الدفعة؟')) return;
+                                      const updated = medicines.map(m => m.id === med.id ? { ...m, batches: m.batches.filter(b => b.id !== batch.id) } : m);
+                                      saveMedicines(updated);
+                                    }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {batches.length === 0 && (
+                            <div style={{ fontSize: '11px', color: '#bbb', marginTop: '5px', textAlign: 'center' }}>لا توجد دفعات — اضغط "📦 دفعة" لإضافة كمية مع تاريخ انتهاء</div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
 
+                  {/* Modal إضافة دفعة */}
+                  {showAddMedicineBatch && medicineBatchId && (
+                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddMedicineBatch(false)}>
+                      <div style={{ background: 'white', borderRadius: '12px', maxWidth: '400px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ background: 'linear-gradient(135deg, #117a65, #0e6655)', padding: '14px 18px', color: 'white' }}>
+                          <h3 style={{ margin: 0, fontSize: '15px' }}>📦 إضافة دفعة — {medicines.find(m => m.id === medicineBatchId)?.name}</h3>
+                          <p style={{ margin: '3px 0 0', fontSize: '11px', opacity: 0.85 }}>كل دفعة لها كميتها وتاريخ انتهائها الخاص</p>
+                        </div>
+                        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📦 الكمية ({medicines.find(m => m.id === medicineBatchId)?.unit}) *</label><input type="number" min="1" value={medicineBatchForm.boxes} onChange={e => setMedicineBatchForm(p => ({ ...p, boxes: e.target.value }))} placeholder="مثال: 3" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الانتهاء *</label><input type="date" value={medicineBatchForm.expiry} onChange={e => setMedicineBatchForm(p => ({ ...p, expiry: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظة</label><input value={medicineBatchForm.notes} onChange={e => setMedicineBatchForm(p => ({ ...p, notes: e.target.value }))} placeholder="مثال: من صيدلية كذا، لوط رقم..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                            <button onClick={handleSaveMedicineBatch} style={{ background: '#117a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                            <button onClick={() => { setShowAddMedicineBatch(false); setMedicineBatchForm({ boxes: '', expiry: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* نموذج إضافة/تعديل دواء */}
                   {showAddMedicine ? (
                     <div style={{ background: '#f0f9f6', border: '2px solid #117a65', borderRadius: '10px', padding: '15px' }}>
-                      <h4 style={{ color: '#117a65', margin: '0 0 12px' }}>{editMedicineId ? '✏️ تعديل دواء' : '➕ إضافة دواء جديد'}</h4>
+                      <h4 style={{ color: '#117a65', margin: '0 0 12px' }}>{editMedicineId ? '✏️ تعديل اسم الدواء' : '➕ إضافة دواء جديد'}</h4>
+                      <p style={{ fontSize: '12px', color: '#888', margin: '0 0 10px' }}>بعد الإضافة اضغط "📦 دفعة" لإضافة الكميات مع تواريخ انتهائها</p>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم الدواء *</label>
-                          <input value={medicineForm.name} onChange={e => setMedicineForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: تايلوزين" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وحدة القياس</label>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم الدواء *</label><input value={medicineForm.name} onChange={e => setMedicineForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: بي كمبلكس" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وحدة القياس</label>
                           <select value={medicineForm.unit} onChange={e => setMedicineForm(p => ({ ...p, unit: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
                             <option>علبة</option><option>زجاجة</option><option>كيس</option><option>قارورة</option><option>حبة</option><option>لتر</option>
                           </select>
                         </div>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الكمية المتوفرة</label>
-                          <input type="number" min="0" value={medicineForm.boxes} onChange={e => setMedicineForm(p => ({ ...p, boxes: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>تكلفة الوحدة (ريال)</label>
-                          <input type="number" min="0" value={medicineForm.cost} onChange={e => setMedicineForm(p => ({ ...p, cost: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
-                        </div>
-                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}>
-                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>تاريخ الانتهاء</label>
-                          <input type="date" value={medicineForm.expiry} onChange={e => setMedicineForm(p => ({ ...p, expiry: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
-                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>تكلفة الوحدة (ريال)</label><input type="number" min="0" value={medicineForm.cost} onChange={e => setMedicineForm(p => ({ ...p, cost: e.target.value }))} placeholder="مثال: 25" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
                         <button onClick={handleSaveMedicine} style={{ background: '#117a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                        <button onClick={() => { setShowAddMedicine(false); setEditMedicineId(null); setMedicineForm({ name: '', boxes: '', expiry: '', cost: '', unit: 'علبة' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                        <button onClick={() => { setShowAddMedicine(false); setEditMedicineId(null); setMedicineForm({ name: '', unit: 'علبة', cost: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
