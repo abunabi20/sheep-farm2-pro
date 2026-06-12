@@ -325,7 +325,8 @@ const App = () => {
   });
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [showAddFood, setShowAddFood] = useState(false);
-  const [foodForm, setFoodForm] = useState({ date: new Date().toISOString().split('T')[0], mealType: 'daily', costPerPerson: '', totalCost: '', notes: '' });
+  const [editFoodId, setEditFoodId] = useState(null);
+  const [foodForm, setFoodForm] = useState({ date: new Date().toISOString().split('T')[0], type: 'weekly', totalCost: '', notes: '' });
   const [foodRecords, setFoodRecords] = useState(() => { const s = localStorage.getItem('workerFoodRecords'); return s ? JSON.parse(s) : []; });
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -1623,13 +1624,19 @@ const App = () => {
   }, [user]);
 
   const handleSaveFood = () => {
-    if (!foodForm.date) { alert('أدخل التاريخ'); return; }
-    const activeOnSite = workers.filter(w => w.status === 'active' || w.status === 'sick').length;
-    const total = foodForm.totalCost ? parseFloat(foodForm.totalCost) : (parseFloat(foodForm.costPerPerson) || 0) * activeOnSite;
-    if (!total) { alert('أدخل التكلفة'); return; }
-    const rec = { id: `food_${Date.now()}`, ...foodForm, total, activeCount: activeOnSite };
-    saveFoodRecords([...foodRecords, rec]);
-    setFoodForm({ date: new Date().toISOString().split('T')[0], mealType: 'daily', costPerPerson: '', totalCost: '', notes: '' });
+    if (!foodForm.date || !foodForm.totalCost) { alert('أدخل التاريخ والتكلفة'); return; }
+    const total = parseFloat(foodForm.totalCost) || 0;
+    if (!total) { alert('أدخل تكلفة الزاد'); return; }
+    let updated;
+    if (editFoodId) {
+      updated = foodRecords.map(r => r.id === editFoodId ? { ...r, ...foodForm, total } : r);
+    } else {
+      const rec = { id: `food_${Date.now()}`, ...foodForm, total };
+      updated = [...foodRecords, rec];
+    }
+    saveFoodRecords(updated);
+    setFoodForm({ date: new Date().toISOString().split('T')[0], type: 'weekly', totalCost: '', notes: '' });
+    setEditFoodId(null);
     setShowAddFood(false);
   };
 
@@ -3221,43 +3228,31 @@ const App = () => {
               {/* ===== تبويب الزاد ===== */}
               {workersTab === 'food' && (
                 <div>
-                  {/* العمال الموجودون حالياً */}
+                  {/* العمال على رأس العمل */}
                   {(() => {
                     const onSite = workers.filter(w => w.status === 'active' || w.status === 'sick');
                     const totalFoodCost = foodRecords.reduce((s, r) => s + (r.total || 0), 0);
                     const monthlyFoodCost = foodRecords.filter(r => {
-                      const d = new Date(r.date);
-                      const now = new Date();
+                      const d = new Date(r.date); const now = new Date();
                       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
                     }).reduce((s, r) => s + (r.total || 0), 0);
                     return (
                       <>
-                        {/* العمال على رأس العمل */}
                         <div style={{ background: '#fdf8f5', borderRadius: '10px', padding: '12px 15px', marginBottom: '14px', border: '1px solid #e8d5b0' }}>
-                          <div style={{ fontWeight: 'bold', color: '#784212', fontSize: '13px', marginBottom: '8px' }}>👷 العمال على رأس العمل الآن</div>
-                          {onSite.length === 0 ? (
-                            <div style={{ color: '#bbb', fontSize: '12px' }}>لا يوجد عمال نشطون حالياً</div>
-                          ) : (
+                          <div style={{ fontWeight: 'bold', color: '#784212', fontSize: '13px', marginBottom: '6px' }}>👷 العمال على رأس العمل الآن</div>
+                          {onSite.length === 0 ? <div style={{ color: '#bbb', fontSize: '12px' }}>لا يوجد عمال نشطون</div> : (
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              {onSite.map(w => (
-                                <span key={w.id} style={{ background: '#d5f5e3', color: '#27ae60', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>
-                                  👷 {w.name}
-                                </span>
-                              ))}
-                              <span style={{ background: '#784212', color: 'white', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>
-                                الإجمالي: {onSite.length}
-                              </span>
+                              {onSite.map(w => <span key={w.id} style={{ background: '#d5f5e3', color: '#27ae60', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>👷 {w.name}</span>)}
+                              <span style={{ background: '#784212', color: 'white', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>{onSite.length} شخص</span>
                             </div>
                           )}
                         </div>
-
-                        {/* ملخص تكاليف الزاد */}
                         {foodRecords.length > 0 && (
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginBottom: '14px' }}>
                             {[
                               { label: 'إجمالي الزاد', val: totalFoodCost.toLocaleString() + ' ر', color: '#784212' },
                               { label: 'هذا الشهر', val: monthlyFoodCost.toLocaleString() + ' ر', color: '#e67e22' },
-                              { label: 'عدد السجلات', val: foodRecords.length, color: '#2471a3' },
+                              { label: 'عدد البكجات', val: foodRecords.length, color: '#2471a3' },
                             ].map(s => (
                               <div key={s.label} style={{ background: '#fdf8f5', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #e8d5b0' }}>
                                 <div style={{ fontWeight: 'bold', color: s.color, fontSize: '15px' }}>{s.val}</div>
@@ -3270,64 +3265,53 @@ const App = () => {
                     );
                   })()}
 
-                  {/* نموذج إضافة وجبة */}
+                  {/* نموذج إضافة/تعديل زاد */}
                   {showAddFood ? (
                     <div style={{ background: '#fdf8f5', border: '2px solid #784212', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
-                      <h4 style={{ color: '#784212', margin: '0 0 10px' }}>🍽️ تسجيل تكلفة وجبة</h4>
-                      <div style={{ background: '#f0f9f6', borderRadius: '7px', padding: '8px 12px', marginBottom: '10px', fontSize: '12px', color: '#555' }}>
-                        👷 العمال الموجودون حالياً: <strong style={{ color: '#784212' }}>{workers.filter(w => w.status === 'active' || w.status === 'sick').length}</strong> شخص
-                      </div>
+                      <h4 style={{ color: '#784212', margin: '0 0 10px' }}>{editFoodId ? '✏️ تعديل بكج الزاد' : '🛒 تسجيل بكج زاد جديد'}</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
-                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 التاريخ</label><input type="date" value={foodForm.date} onChange={e => setFoodForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
-                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع الوجبة</label>
-                          <select value={foodForm.mealType} onChange={e => setFoodForm(p => ({ ...p, mealType: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
-                            <option value="daily">🍽️ يومي</option>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء</label><input type="date" value={foodForm.date} onChange={e => setFoodForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع الزاد</label>
+                          <select value={foodForm.type} onChange={e => setFoodForm(p => ({ ...p, type: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
                             <option value="weekly">📅 أسبوعي</option>
+                            <option value="biweekly">📅 نصف شهري</option>
                             <option value="monthly">🗓️ شهري</option>
                             <option value="special">🎉 مناسبة خاصة</option>
+                            <option value="other">📌 أخرى</option>
                           </select>
                         </div>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 تكلفة للشخص (ريال)</label>
-                          <input type="number" min="0" step="0.5" value={foodForm.costPerPerson} onChange={e => setFoodForm(p => ({ ...p, costPerPerson: e.target.value, totalCost: '' }))} placeholder="اختياري إذا أدخلت الإجمالي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 تكلفة الزاد المشتراة (ريال) *</label>
+                          <input type="number" min="0" step="0.5" value={foodForm.totalCost} onChange={e => setFoodForm(p => ({ ...p, totalCost: e.target.value }))} placeholder="المبلغ الكلي للزاد المشترى" style={{ padding: '9px', border: '2px solid #784212', borderRadius: '6px', width: '100%', fontSize: '14px', fontWeight: 'bold' }} />
                         </div>
-                        <div>
-                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 التكلفة الإجمالية (ريال)</label>
-                          <input type="number" min="0" step="0.5" value={foodForm.totalCost} onChange={e => setFoodForm(p => ({ ...p, totalCost: e.target.value, costPerPerson: '' }))} placeholder="أو أدخل للشخص فوق" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
-                        </div>
-                        {foodForm.costPerPerson && workers.filter(w => w.status === 'active' || w.status === 'sick').length > 0 && (
-                          <div style={{ gridColumn: isMobile ? '1' : '1 / -1', background: '#d5f5e3', borderRadius: '6px', padding: '8px 12px', fontSize: '13px', color: '#27ae60', fontWeight: 'bold' }}>
-                            💵 الإجمالي المحسوب: {(parseFloat(foodForm.costPerPerson) * workers.filter(w => w.status === 'active' || w.status === 'sick').length).toFixed(2)} ريال
-                          </div>
-                        )}
-                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={foodForm.notes} onChange={e => setFoodForm(p => ({ ...p, notes: e.target.value }))} placeholder="مثال: غداء رمضاني، شيّة..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={foodForm.notes} onChange={e => setFoodForm(p => ({ ...p, notes: e.target.value }))} placeholder="مثال: دجاج + أرز + خضار، شيّة خاصة..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
                         <button onClick={handleSaveFood} style={{ background: '#784212', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                        <button onClick={() => setShowAddFood(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                        <button onClick={() => { setShowAddFood(false); setEditFoodId(null); setFoodForm({ date: new Date().toISOString().split('T')[0], type: 'weekly', totalCost: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
-                    <button onClick={() => setShowAddFood(true)} style={{ width: '100%', padding: '11px', background: '#784212', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>🍽️ تسجيل تكلفة وجبة</button>
+                    <button onClick={() => setShowAddFood(true)} style={{ width: '100%', padding: '11px', background: '#784212', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>🛒 تسجيل بكج زاد جديد</button>
                   )}
 
-                  {/* سجل الوجبات */}
+                  {/* سجل الزاد */}
                   {foodRecords.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🍽️</div><div>لا توجد سجلات وجبات بعد</div></div>
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🛒</div><div>لا توجد سجلات زاد بعد</div></div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {[...foodRecords].sort((a,b) => new Date(b.date)-new Date(a.date)).map(rec => {
-                        const mealLabels = { daily: '🍽️ يومي', weekly: '📅 أسبوعي', monthly: '🗓️ شهري', special: '🎉 مناسبة' };
+                        const typeLabels = { weekly: '📅 أسبوعي', biweekly: '📅 نصف شهري', monthly: '🗓️ شهري', special: '🎉 مناسبة', other: '📌 أخرى' };
                         return (
                           <div key={rec.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                             <div style={{ fontSize: '13px' }}>
-                              <span style={{ fontWeight: 'bold', color: '#784212' }}>{mealLabels[rec.mealType] || rec.mealType}</span>
+                              <span style={{ fontWeight: 'bold', color: '#784212' }}>{typeLabels[rec.type] || typeLabels[rec.mealType] || '🛒 زاد'}</span>
                               <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>📅 {new Date(rec.date).toLocaleDateString('ar-SA')}</span>
-                              {rec.activeCount && <span style={{ color: '#888', fontSize: '11px' }}>👷 {rec.activeCount} شخص</span>}
                               {rec.notes && <span style={{ color: '#aaa', fontSize: '11px', marginRight: '6px' }}>— {rec.notes}</span>}
                             </div>
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                               <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '14px' }}>{rec.total.toLocaleString()} ر</span>
+                              <button onClick={() => { setFoodForm({ date: rec.date, type: rec.type || rec.mealType || 'weekly', totalCost: String(rec.total), notes: rec.notes || '' }); setEditFoodId(rec.id); setShowAddFood(true); }} style={{ background: '#f0f9f6', border: '1px solid #784212', color: '#784212', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
                               <button onClick={() => { if (window.confirm('حذف؟')) saveFoodRecords(foodRecords.filter(f => f.id !== rec.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
                             </div>
                           </div>
@@ -3338,7 +3322,7 @@ const App = () => {
                 </div>
               )}
 
-              {workersTab === 'summary' && (
+                            {workersTab === 'summary' && (
                 <div>
                   {/* البطاقة الرئيسية */}
                   <div style={{ background: 'linear-gradient(135deg, #784212, #5d3310)', borderRadius: '12px', padding: '18px', marginBottom: '15px', color: 'white' }}>
