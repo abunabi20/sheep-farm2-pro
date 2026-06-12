@@ -130,7 +130,8 @@ const App = () => {
   const [medicineForm, setMedicineForm] = useState({ name: '', unit: 'علبة', cost: '' });
   const [showAddMedicineBatch, setShowAddMedicineBatch] = useState(false);
   const [medicineBatchId, setMedicineBatchId] = useState(null);
-  const [medicineBatchForm, setMedicineBatchForm] = useState({ boxes: '', expiry: '', notes: '' });
+  const [editBatchId, setEditBatchId] = useState(null);
+  const [medicineBatchForm, setMedicineBatchForm] = useState({ boxes: '', expiry: '', purchaseDate: '', cost: '', notes: '' });
   // سجل العلاجات
   const [treatmentRecords, setTreatmentRecords] = useState(() => {
     const saved = localStorage.getItem('vetTreatments');
@@ -323,6 +324,9 @@ const App = () => {
     amount: '', description: '', notes: ''
   });
   const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [showAddFood, setShowAddFood] = useState(false);
+  const [foodForm, setFoodForm] = useState({ date: new Date().toISOString().split('T')[0], mealType: 'daily', costPerPerson: '', totalCost: '', notes: '' });
+  const [foodRecords, setFoodRecords] = useState(() => { const s = localStorage.getItem('workerFoodRecords'); return s ? JSON.parse(s) : []; });
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
   const [allUsers, setAllUsers] = useState(() => {
@@ -758,12 +762,25 @@ const App = () => {
     const med = medicines.find(m => m.id === medicineBatchId);
     if (!med) return;
     const batches = med.batches || [];
-    const newBatch = { id: `batch_${Date.now()}`, boxes: parseFloat(medicineBatchForm.boxes) || 0, expiry: medicineBatchForm.expiry, notes: medicineBatchForm.notes };
-    const updated = medicines.map(m => m.id === medicineBatchId ? { ...m, batches: [...batches, newBatch] } : m);
+    const batchData = {
+      boxes: parseFloat(medicineBatchForm.boxes) || 0,
+      expiry: medicineBatchForm.expiry,
+      purchaseDate: medicineBatchForm.purchaseDate || '',
+      cost: parseFloat(medicineBatchForm.cost) || 0,
+      notes: medicineBatchForm.notes
+    };
+    let updatedBatches;
+    if (editBatchId) {
+      updatedBatches = batches.map(b => b.id === editBatchId ? { ...b, ...batchData } : b);
+    } else {
+      updatedBatches = [...batches, { id: `batch_${Date.now()}`, ...batchData }];
+    }
+    const updated = medicines.map(m => m.id === medicineBatchId ? { ...m, batches: updatedBatches } : m);
     saveMedicines(updated);
-    setMedicineBatchForm({ boxes: '', expiry: '', notes: '' });
+    setMedicineBatchForm({ boxes: '', expiry: '', purchaseDate: '', cost: '', notes: '' });
     setShowAddMedicineBatch(false);
     setMedicineBatchId(null);
+    setEditBatchId(null);
   };
 
   const handleDeleteMedicine = (id) => {
@@ -1591,6 +1608,29 @@ const App = () => {
     setWorkerCostForm({ date: new Date().toISOString().split('T')[0], type: 'residence', amount: '', description: '', notes: '' });
     setShowAddWorkerCost(false);
     setWorkerCostWorkerId(null);
+  };
+
+  // دوال الزاد
+  const saveFoodRecords = useCallback((updated) => {
+    setFoodRecords(updated);
+    localStorage.setItem('workerFoodRecords', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/workerFoodRecords`), updated).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/workerFoodRecords`), (snap) => { if (snap.exists()) setFoodRecords(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  const handleSaveFood = () => {
+    if (!foodForm.date) { alert('أدخل التاريخ'); return; }
+    const activeOnSite = workers.filter(w => w.status === 'active' || w.status === 'sick').length;
+    const total = foodForm.totalCost ? parseFloat(foodForm.totalCost) : (parseFloat(foodForm.costPerPerson) || 0) * activeOnSite;
+    if (!total) { alert('أدخل التكلفة'); return; }
+    const rec = { id: `food_${Date.now()}`, ...foodForm, total, activeCount: activeOnSite };
+    saveFoodRecords([...foodRecords, rec]);
+    setFoodForm({ date: new Date().toISOString().split('T')[0], mealType: 'daily', costPerPerson: '', totalCost: '', notes: '' });
+    setShowAddFood(false);
   };
 
   // إحصائيات العمال
@@ -2977,6 +3017,7 @@ const App = () => {
               {[
                 { key: 'list', label: '👷 العمال' },
                 { key: 'costs', label: '💸 التكاليف الإضافية' },
+                { key: 'food', label: '🍽️ الزاد' },
                 { key: 'summary', label: '📊 ملخص المصروفات' },
               ].map(tab => (
                 <button key={tab.key} onClick={() => setWorkersTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: workersTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: workersTab === tab.key ? '3px solid #784212' : '3px solid transparent', cursor: 'pointer', fontWeight: workersTab === tab.key ? 'bold' : 'normal', color: workersTab === tab.key ? '#784212' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
@@ -3177,6 +3218,126 @@ const App = () => {
               )}
 
               {/* ===== تبويب ملخص المصروفات ===== */}
+              {/* ===== تبويب الزاد ===== */}
+              {workersTab === 'food' && (
+                <div>
+                  {/* العمال الموجودون حالياً */}
+                  {(() => {
+                    const onSite = workers.filter(w => w.status === 'active' || w.status === 'sick');
+                    const totalFoodCost = foodRecords.reduce((s, r) => s + (r.total || 0), 0);
+                    const monthlyFoodCost = foodRecords.filter(r => {
+                      const d = new Date(r.date);
+                      const now = new Date();
+                      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                    }).reduce((s, r) => s + (r.total || 0), 0);
+                    return (
+                      <>
+                        {/* العمال على رأس العمل */}
+                        <div style={{ background: '#fdf8f5', borderRadius: '10px', padding: '12px 15px', marginBottom: '14px', border: '1px solid #e8d5b0' }}>
+                          <div style={{ fontWeight: 'bold', color: '#784212', fontSize: '13px', marginBottom: '8px' }}>👷 العمال على رأس العمل الآن</div>
+                          {onSite.length === 0 ? (
+                            <div style={{ color: '#bbb', fontSize: '12px' }}>لا يوجد عمال نشطون حالياً</div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              {onSite.map(w => (
+                                <span key={w.id} style={{ background: '#d5f5e3', color: '#27ae60', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>
+                                  👷 {w.name}
+                                </span>
+                              ))}
+                              <span style={{ background: '#784212', color: 'white', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>
+                                الإجمالي: {onSite.length}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* ملخص تكاليف الزاد */}
+                        {foodRecords.length > 0 && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginBottom: '14px' }}>
+                            {[
+                              { label: 'إجمالي الزاد', val: totalFoodCost.toLocaleString() + ' ر', color: '#784212' },
+                              { label: 'هذا الشهر', val: monthlyFoodCost.toLocaleString() + ' ر', color: '#e67e22' },
+                              { label: 'عدد السجلات', val: foodRecords.length, color: '#2471a3' },
+                            ].map(s => (
+                              <div key={s.label} style={{ background: '#fdf8f5', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #e8d5b0' }}>
+                                <div style={{ fontWeight: 'bold', color: s.color, fontSize: '15px' }}>{s.val}</div>
+                                <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>{s.label}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+
+                  {/* نموذج إضافة وجبة */}
+                  {showAddFood ? (
+                    <div style={{ background: '#fdf8f5', border: '2px solid #784212', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                      <h4 style={{ color: '#784212', margin: '0 0 10px' }}>🍽️ تسجيل تكلفة وجبة</h4>
+                      <div style={{ background: '#f0f9f6', borderRadius: '7px', padding: '8px 12px', marginBottom: '10px', fontSize: '12px', color: '#555' }}>
+                        👷 العمال الموجودون حالياً: <strong style={{ color: '#784212' }}>{workers.filter(w => w.status === 'active' || w.status === 'sick').length}</strong> شخص
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 التاريخ</label><input type="date" value={foodForm.date} onChange={e => setFoodForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع الوجبة</label>
+                          <select value={foodForm.mealType} onChange={e => setFoodForm(p => ({ ...p, mealType: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="daily">🍽️ يومي</option>
+                            <option value="weekly">📅 أسبوعي</option>
+                            <option value="monthly">🗓️ شهري</option>
+                            <option value="special">🎉 مناسبة خاصة</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 تكلفة للشخص (ريال)</label>
+                          <input type="number" min="0" step="0.5" value={foodForm.costPerPerson} onChange={e => setFoodForm(p => ({ ...p, costPerPerson: e.target.value, totalCost: '' }))} placeholder="اختياري إذا أدخلت الإجمالي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 التكلفة الإجمالية (ريال)</label>
+                          <input type="number" min="0" step="0.5" value={foodForm.totalCost} onChange={e => setFoodForm(p => ({ ...p, totalCost: e.target.value, costPerPerson: '' }))} placeholder="أو أدخل للشخص فوق" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        {foodForm.costPerPerson && workers.filter(w => w.status === 'active' || w.status === 'sick').length > 0 && (
+                          <div style={{ gridColumn: isMobile ? '1' : '1 / -1', background: '#d5f5e3', borderRadius: '6px', padding: '8px 12px', fontSize: '13px', color: '#27ae60', fontWeight: 'bold' }}>
+                            💵 الإجمالي المحسوب: {(parseFloat(foodForm.costPerPerson) * workers.filter(w => w.status === 'active' || w.status === 'sick').length).toFixed(2)} ريال
+                          </div>
+                        )}
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={foodForm.notes} onChange={e => setFoodForm(p => ({ ...p, notes: e.target.value }))} placeholder="مثال: غداء رمضاني، شيّة..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveFood} style={{ background: '#784212', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => setShowAddFood(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddFood(true)} style={{ width: '100%', padding: '11px', background: '#784212', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>🍽️ تسجيل تكلفة وجبة</button>
+                  )}
+
+                  {/* سجل الوجبات */}
+                  {foodRecords.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🍽️</div><div>لا توجد سجلات وجبات بعد</div></div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {[...foodRecords].sort((a,b) => new Date(b.date)-new Date(a.date)).map(rec => {
+                        const mealLabels = { daily: '🍽️ يومي', weekly: '📅 أسبوعي', monthly: '🗓️ شهري', special: '🎉 مناسبة' };
+                        return (
+                          <div key={rec.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ fontSize: '13px' }}>
+                              <span style={{ fontWeight: 'bold', color: '#784212' }}>{mealLabels[rec.mealType] || rec.mealType}</span>
+                              <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>📅 {new Date(rec.date).toLocaleDateString('ar-SA')}</span>
+                              {rec.activeCount && <span style={{ color: '#888', fontSize: '11px' }}>👷 {rec.activeCount} شخص</span>}
+                              {rec.notes && <span style={{ color: '#aaa', fontSize: '11px', marginRight: '6px' }}>— {rec.notes}</span>}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '14px' }}>{rec.total.toLocaleString()} ر</span>
+                              <button onClick={() => { if (window.confirm('حذف؟')) saveFoodRecords(foodRecords.filter(f => f.id !== rec.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {workersTab === 'summary' && (
                 <div>
                   {/* البطاقة الرئيسية */}
@@ -5241,20 +5402,21 @@ const App = () => {
                                 const bExpiring = d !== null && d <= 90 && d > 0;
                                 return (
                                   <div key={batch.id} style={{ background: bExpired ? '#fff0f0' : bExpiring ? '#fff8f0' : '#f9f9f9', border: `1px solid ${bExpired ? '#e74c3c' : bExpiring ? '#e67e22' : '#ddd'}`, borderRadius: '7px', padding: '7px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-                                    <div style={{ fontSize: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                    <div style={{ fontSize: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                                       <span style={{ background: '#e8eaf6', color: '#3949ab', borderRadius: '4px', padding: '1px 6px', fontSize: '11px', fontWeight: 'bold' }}>دفعة {bi + 1}</span>
                                       <span><strong>{batch.boxes}</strong> {med.unit}</span>
+                                      {batch.cost > 0 && <span style={{ color: '#27ae60', fontWeight: 'bold' }}>💰 {batch.cost} ر</span>}
+                                      {batch.purchaseDate && <span style={{ color: '#888' }}>🛒 {new Date(batch.purchaseDate).toLocaleDateString('ar-SA')}</span>}
                                       <span style={{ color: bExpired ? '#e74c3c' : bExpiring ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>
                                         📅 {new Date(batch.expiry).toLocaleDateString('ar-SA')}
                                         {d !== null && <span style={{ fontSize: '11px', marginRight: '4px' }}>({bExpired ? `منتهي منذ ${Math.abs(d)} يوم` : `باقي ${d} يوم`})</span>}
                                       </span>
-                                      {batch.notes && <span style={{ color: '#888', fontSize: '11px' }}>— {batch.notes}</span>}
+                                      {batch.notes && <span style={{ color: '#aaa', fontSize: '11px' }}>— {batch.notes}</span>}
                                     </div>
-                                    <button onClick={() => {
-                                      if (!window.confirm('حذف هذه الدفعة؟')) return;
-                                      const updated = medicines.map(m => m.id === med.id ? { ...m, batches: m.batches.filter(b => b.id !== batch.id) } : m);
-                                      saveMedicines(updated);
-                                    }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                                    <div style={{ display: 'flex', gap: '4px' }}>
+                                      <button onClick={() => { setMedicineBatchId(med.id); setEditBatchId(batch.id); setMedicineBatchForm({ boxes: String(batch.boxes), expiry: batch.expiry, purchaseDate: batch.purchaseDate || '', cost: String(batch.cost || ''), notes: batch.notes || '' }); setShowAddMedicineBatch(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                                      <button onClick={() => { if (!window.confirm('حذف هذه الدفعة؟')) return; const updated = medicines.map(m => m.id === med.id ? { ...m, batches: m.batches.filter(b => b.id !== batch.id) } : m); saveMedicines(updated); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                                    </div>
                                   </div>
                                 );
                               })}
@@ -5270,19 +5432,28 @@ const App = () => {
 
                   {/* Modal إضافة دفعة */}
                   {showAddMedicineBatch && medicineBatchId && (
-                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddMedicineBatch(false)}>
-                      <div style={{ background: 'white', borderRadius: '12px', maxWidth: '400px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => { setShowAddMedicineBatch(false); setEditBatchId(null); setMedicineBatchForm({ boxes: '', expiry: '', purchaseDate: '', cost: '', notes: '' }); }}>
+                      <div style={{ background: 'white', borderRadius: '12px', maxWidth: '420px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
                         <div style={{ background: 'linear-gradient(135deg, #117a65, #0e6655)', padding: '14px 18px', color: 'white' }}>
-                          <h3 style={{ margin: 0, fontSize: '15px' }}>📦 إضافة دفعة — {medicines.find(m => m.id === medicineBatchId)?.name}</h3>
-                          <p style={{ margin: '3px 0 0', fontSize: '11px', opacity: 0.85 }}>كل دفعة لها كميتها وتاريخ انتهائها الخاص</p>
+                          <h3 style={{ margin: 0, fontSize: '15px' }}>{editBatchId ? '✏️ تعديل دفعة' : '📦 إضافة دفعة'} — {medicines.find(m => m.id === medicineBatchId)?.name}</h3>
+                          <p style={{ margin: '3px 0 0', fontSize: '11px', opacity: 0.85 }}>كل دفعة لها كميتها وسعرها وتاريخ انتهائها الخاص</p>
                         </div>
-                        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📦 الكمية ({medicines.find(m => m.id === medicineBatchId)?.unit}) *</label><input type="number" min="1" value={medicineBatchForm.boxes} onChange={e => setMedicineBatchForm(p => ({ ...p, boxes: e.target.value }))} placeholder="مثال: 3" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
-                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الانتهاء *</label><input type="date" value={medicineBatchForm.expiry} onChange={e => setMedicineBatchForm(p => ({ ...p, expiry: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '11px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                            <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📦 الكمية ({medicines.find(m => m.id === medicineBatchId)?.unit}) *</label><input type="number" min="1" value={medicineBatchForm.boxes} onChange={e => setMedicineBatchForm(p => ({ ...p, boxes: e.target.value }))} placeholder="مثال: 3" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                            <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر الوحدة (ريال)</label><input type="number" min="0" step="0.5" value={medicineBatchForm.cost} onChange={e => setMedicineBatchForm(p => ({ ...p, cost: e.target.value }))} placeholder="مثال: 25" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                            <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء</label><input type="date" value={medicineBatchForm.purchaseDate} onChange={e => setMedicineBatchForm(p => ({ ...p, purchaseDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                            <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الانتهاء *</label><input type="date" value={medicineBatchForm.expiry} onChange={e => setMedicineBatchForm(p => ({ ...p, expiry: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                          </div>
+                          {medicineBatchForm.boxes && medicineBatchForm.cost && (
+                            <div style={{ background: '#d5f5e3', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', color: '#27ae60', fontWeight: 'bold' }}>
+                              💵 إجمالي الدفعة: {(parseFloat(medicineBatchForm.boxes) * parseFloat(medicineBatchForm.cost)).toFixed(2)} ريال
+                            </div>
+                          )}
                           <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظة</label><input value={medicineBatchForm.notes} onChange={e => setMedicineBatchForm(p => ({ ...p, notes: e.target.value }))} placeholder="مثال: من صيدلية كذا، لوط رقم..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                             <button onClick={handleSaveMedicineBatch} style={{ background: '#117a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                            <button onClick={() => { setShowAddMedicineBatch(false); setMedicineBatchForm({ boxes: '', expiry: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                            <button onClick={() => { setShowAddMedicineBatch(false); setEditBatchId(null); setMedicineBatchForm({ boxes: '', expiry: '', purchaseDate: '', cost: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                           </div>
                         </div>
                       </div>
