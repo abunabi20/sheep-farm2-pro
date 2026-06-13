@@ -4241,7 +4241,6 @@ const App = () => {
                   {solarMaintenance.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🔧</div><div>لا توجد سجلات صيانة بعد</div></div>}
                 </div>
               )}
-            </div>
 
               {/* ===== تبويب التوقع الذكي ===== */}
               {solarTab === 'lifespan' && (
