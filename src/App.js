@@ -251,9 +251,13 @@ const App = () => {
 
   // ===== نظام الطاقة الشمسية =====
   const [showSolarSystem, setShowSolarSystem] = useState(false);
-  const [solarTab, setSolarTab] = useState('batteries'); // batteries | panels | inverter | costs
+  const [solarTab, setSolarTab] = useState('batteries'); // batteries | panels | inverter | costs | lifespan
   const [batteries, setBatteries] = useState(() => {
     const s = localStorage.getItem('solarBatteries');
+    return s ? JSON.parse(s) : [];
+  });
+  const [batteryLocations, setBatteryLocations] = useState(() => {
+    const s = localStorage.getItem('batteryLocations');
     return s ? JSON.parse(s) : [];
   });
   const [showAddBattery, setShowAddBattery] = useState(false);
@@ -261,8 +265,12 @@ const App = () => {
   const [batteryForm, setBatteryForm] = useState({
     name: '', location: '', brand: '', country: '',
     capacity: '', voltage: '', purchaseDate: '',
-    warrantyYears: 1, lifespanYears: 2, purchasePrice: '', notes: ''
+    warrantyYears: 1, lifespanYears: 2, purchasePrice: '',
+    serviceStatus: 'active', // active | retired
+    notes: ''
   });
+  const [showManageLocations, setShowManageLocations] = useState(false);
+  const [newLocationInput, setNewLocationInput] = useState('');
   const [panels, setPanels] = useState(() => {
     const s = localStorage.getItem('solarPanels');
     return s ? JSON.parse(s) : [];
@@ -281,7 +289,7 @@ const App = () => {
   const [editInverterId, setEditInverterId] = useState(null);
   const [inverterForm, setInverterForm] = useState({
     name: '', brand: '', capacity: '', purchaseDate: '',
-    warrantyYears: 2, purchasePrice: '', notes: ''
+    warrantyYears: 2, purchasePrice: '', serviceStatus: 'active', notes: ''
   });
 
   // ===== نظام مراقبة الغاز =====
@@ -1284,6 +1292,51 @@ const App = () => {
     if (user) set(ref(database, `users/${user.id}/solarBatteries`), updated).catch(() => {});
   }, [user]);
 
+  const saveBatteryLocations = useCallback((updated) => {
+    setBatteryLocations(updated);
+    localStorage.setItem('batteryLocations', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/batteryLocations`), updated).catch(() => {});
+  }, [user]);
+
+  // تحليل العمر الافتراضي الذكي
+  const batteryLifespanAnalysis = useMemo(() => {
+    // البطاريات المتقاعدة — لها عمر فعلي معروف
+    const retired = batteries.filter(b => b.serviceStatus === 'retired' && b.purchaseDate);
+    const active = batteries.filter(b => b.serviceStatus !== 'retired' && b.purchaseDate);
+
+    // حساب العمر الفعلي لكل بطارية متقاعدة
+    const retiredData = retired.map(b => {
+      const daysInService = Math.floor((new Date() - new Date(b.purchaseDate)) / 86400000);
+      return { ...b, actualDays: daysInService, actualYears: (daysInService / 365).toFixed(1) };
+    });
+
+    // متوسط العمر الفعلي من البطاريات المتقاعدة
+    const avgActualDays = retiredData.length > 0
+      ? retiredData.reduce((s, b) => s + b.actualDays, 0) / retiredData.length
+      : null;
+
+    // تحليل البطاريات النشطة
+    const activeAnalysis = active.map(b => {
+      const daysInService = Math.floor((new Date() - new Date(b.purchaseDate)) / 86400000);
+      const expectedDays = b.lifespanYears * 365;
+      const remaining = Math.max(0, expectedDays - daysInService);
+      const pctUsed = Math.round((daysInService / expectedDays) * 100);
+
+      // التوقع بناءً على متوسط البطاريات السابقة
+      const smartExpectedDays = avgActualDays || expectedDays;
+      const smartRemaining = Math.max(0, smartExpectedDays - daysInService);
+      const smartEndDate = new Date(new Date(b.purchaseDate).getTime() + smartExpectedDays * 86400000);
+
+      // درجة الخطر
+      const riskLevel = pctUsed >= 90 ? 'critical' : pctUsed >= 75 ? 'high' : pctUsed >= 50 ? 'medium' : 'low';
+
+      return { ...b, daysInService, remaining, pctUsed, smartRemaining, smartEndDate, riskLevel,
+        smartExpectedYears: (smartExpectedDays / 365).toFixed(1) };
+    });
+
+    return { retiredData, activeAnalysis, avgActualDays, avgActualYears: avgActualDays ? (avgActualDays / 365).toFixed(1) : null };
+  }, [batteries]);
+
   const savePanels = useCallback((updated) => {
     setPanels(updated);
     localStorage.setItem('solarPanels', JSON.stringify(updated));
@@ -1300,6 +1353,7 @@ const App = () => {
   useEffect(() => {
     if (!user) return;
     onValue(ref(database, `users/${user.id}/solarBatteries`), (snap) => { if (snap.exists()) setBatteries(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/batteryLocations`), (snap) => { if (snap.exists()) setBatteryLocations(snap.val()); }, { onlyOnce: true });
     onValue(ref(database, `users/${user.id}/solarPanels`), (snap) => { if (snap.exists()) setPanels(snap.val()); }, { onlyOnce: true });
     onValue(ref(database, `users/${user.id}/solarInverters`), (snap) => { if (snap.exists()) setInverters(snap.val()); }, { onlyOnce: true });
   }, [user]);
@@ -1333,7 +1387,12 @@ const App = () => {
       purchasePrice: parseFloat(batteryForm.purchasePrice) || 0,
       warrantyYears: parseFloat(batteryForm.warrantyYears) || 1,
       lifespanYears: parseFloat(batteryForm.lifespanYears) || 2,
+      serviceStatus: batteryForm.serviceStatus || 'active',
     };
+    // أضف الموقع لقائمة المواقع إن لم يكن موجوداً
+    if (batteryForm.location && !batteryLocations.includes(batteryForm.location)) {
+      saveBatteryLocations([...batteryLocations, batteryForm.location]);
+    }
     let updated;
     if (editBatteryId) {
       updated = batteries.map(b => b.id === editBatteryId ? { ...b, ...data } : b);
@@ -1341,7 +1400,7 @@ const App = () => {
       updated = [...batteries, { id: `bat_${Date.now()}`, ...data }];
     }
     saveBatteries(updated);
-    setBatteryForm({ name: '', location: '', brand: '', country: '', capacity: '', voltage: '', purchaseDate: '', warrantyYears: 1, lifespanYears: 2, purchasePrice: '', notes: '' });
+    setBatteryForm({ name: '', location: '', brand: '', country: '', capacity: '', voltage: '', purchaseDate: '', warrantyYears: 1, lifespanYears: 2, purchasePrice: '', serviceStatus: 'active', notes: '' });
     setEditBatteryId(null);
     setShowAddBattery(false);
   };
@@ -1368,6 +1427,7 @@ const App = () => {
       capacity: parseFloat(inverterForm.capacity) || 0,
       purchasePrice: parseFloat(inverterForm.purchasePrice) || 0,
       warrantyYears: parseFloat(inverterForm.warrantyYears) || 2,
+      serviceStatus: inverterForm.serviceStatus || 'active',
     };
     let updated;
     if (editInverterId) {
@@ -1376,7 +1436,7 @@ const App = () => {
       updated = [...inverters, { id: `inv_${Date.now()}`, ...data }];
     }
     saveInverters(updated);
-    setInverterForm({ name: '', brand: '', capacity: '', purchaseDate: '', warrantyYears: 2, purchasePrice: '', notes: '' });
+    setInverterForm({ name: '', brand: '', capacity: '', purchaseDate: '', warrantyYears: 2, purchasePrice: '', serviceStatus: 'active', notes: '' });
     setEditInverterId(null);
     setShowAddInverter(false);
   };
@@ -1445,8 +1505,8 @@ const App = () => {
     const today = new Date();
     const daysDiff = (dateStr) => dateStr ? Math.ceil((new Date(dateStr) - today) / 86400000) : null;
 
-    // 🔋 البطاريات — ضمان وعمر
-    batteries.forEach(bat => {
+    // 🔋 البطاريات — ضمان وعمر (فقط داخل الخدمة)
+    batteries.filter(bat => bat.serviceStatus !== 'retired').forEach(bat => {
       const wDays = daysRemaining(bat.purchaseDate, Math.round(bat.warrantyYears * 365));
       const lDays = daysRemaining(bat.purchaseDate, Math.round(bat.lifespanYears * 365));
       if (wDays !== null && wDays <= 30)
@@ -1455,8 +1515,8 @@ const App = () => {
         alerts.push({ id: `bat-l-${bat.id}`, system: '🔋 الطاقة الشمسية', item: bat.name, msg: lDays === 0 ? '⚠️ انتهى العمر الافتراضي — استبدل!' : `ينتهي العمر الافتراضي خلال ${lDays} يوم`, urgency: lDays === 0 ? 'critical' : lDays <= 14 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowSolarSystem(true); setSolarTab('batteries'); } });
     });
 
-    // ⚡ الإنفرتر — ضمان
-    inverters.forEach(inv => {
+    // ⚡ الإنفرتر — ضمان (فقط داخل الخدمة)
+    inverters.filter(inv => inv.serviceStatus !== 'retired').forEach(inv => {
       const wDays = daysRemaining(inv.purchaseDate, Math.round(inv.warrantyYears * 365));
       if (wDays !== null && wDays <= 30)
         alerts.push({ id: `inv-${inv.id}`, system: '⚡ الإنفرتر', item: inv.name, msg: wDays === 0 ? 'انتهى الضمان!' : `ينتهي الضمان خلال ${wDays} يوم`, urgency: wDays === 0 ? 'critical' : 'medium', action: () => { setShowAlertsCenter(false); setShowSolarSystem(true); setSolarTab('inverter'); } });
@@ -3731,6 +3791,7 @@ const App = () => {
                 { key: 'inverter', label: '⚡ الإنفرتر' },
                 { key: 'costs', label: '💰 التكاليف' },
                 { key: 'solarmaint', label: '🔧 الصيانة' },
+                { key: 'lifespan', label: '🧠 التوقع الذكي' },
               ].map(tab => (
                 <button key={tab.key} onClick={() => setSolarTab(tab.key)} style={{ flex: '0 0 auto', padding: '11px 16px', background: solarTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: solarTab === tab.key ? '3px solid #1a6b3c' : '3px solid transparent', cursor: 'pointer', fontWeight: solarTab === tab.key ? 'bold' : 'normal', color: solarTab === tab.key ? '#1a6b3c' : '#888', fontSize: isMobile ? '11px' : '13px', whiteSpace: 'nowrap' }}>
                   {tab.label}
@@ -3793,7 +3854,8 @@ const App = () => {
                             {bat.purchaseDate && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>📅 تاريخ الشراء: {new Date(bat.purchaseDate).toLocaleDateString('ar-SA')}</div>}
                           </div>
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            <button onClick={() => { setBatteryForm({ name: bat.name, location: bat.location||'', brand: bat.brand||'', country: bat.country||'', capacity: bat.capacity||'', voltage: bat.voltage||'', purchaseDate: bat.purchaseDate||'', warrantyYears: bat.warrantyYears, lifespanYears: bat.lifespanYears, purchasePrice: bat.purchasePrice||'', notes: bat.notes||'' }); setEditBatteryId(bat.id); setShowAddBattery(true); }} style={{ background: '#f0f9f6', border: '1px solid #1a6b3c', color: '#1a6b3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { saveBatteries(batteries.map(b => b.id === bat.id ? { ...b, serviceStatus: b.serviceStatus === 'retired' ? 'active' : 'retired' } : b)); }} style={{ background: bat.serviceStatus === 'retired' ? '#d5f5e3' : '#fdebd0', border: `1px solid ${bat.serviceStatus === 'retired' ? '#27ae60' : '#e67e22'}`, color: bat.serviceStatus === 'retired' ? '#27ae60' : '#e67e22', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>{bat.serviceStatus === 'retired' ? '▶ تفعيل' : '⏹ تقاعد'}</button>
+                            <button onClick={() => { setBatteryForm({ name: bat.name, location: bat.location||'', brand: bat.brand||'', country: bat.country||'', capacity: bat.capacity||'', voltage: bat.voltage||'', purchaseDate: bat.purchaseDate||'', warrantyYears: bat.warrantyYears, lifespanYears: bat.lifespanYears, purchasePrice: bat.purchasePrice||'', serviceStatus: bat.serviceStatus||'active', notes: bat.notes||'' }); setEditBatteryId(bat.id); setShowAddBattery(true); }} style={{ background: '#f0f9f6', border: '1px solid #1a6b3c', color: '#1a6b3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
                             <button onClick={() => { if (window.confirm(`حذف "${bat.name}"؟`)) saveBatteries(batteries.filter(b => b.id !== bat.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
                           </div>
                         </div>
@@ -3849,8 +3911,20 @@ const App = () => {
                     <div style={{ background: '#f0fdf5', border: '2px solid #1a6b3c', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
                       <h4 style={{ color: '#1a6b3c', margin: '0 0 12px' }}>{editBatteryId ? '✏️ تعديل بطارية' : '➕ إضافة بطارية'}</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
-                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم/رقم البطارية *</label><input value={batteryForm.name} onChange={e => setBatteryForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: بطارية 1 - موقع أ" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
-                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📍 الموقع</label><input value={batteryForm.location} onChange={e => setBatteryForm(p => ({ ...p, location: e.target.value }))} placeholder="مثال: غرفة الكهرباء - شمال" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم/رقم البطارية *</label><input value={batteryForm.name} onChange={e => setBatteryForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: بطارية 1" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📍 الموقع</label>
+                          <div style={{ display: 'flex', gap: '5px' }}>
+                            <select value={batteryForm.location} onChange={e => setBatteryForm(p => ({ ...p, location: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', flex: 1, fontSize: '13px' }}>
+                              <option value="">— اختر موقعاً —</option>
+                              {batteryLocations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                              <option value="__new__">✏️ موقع جديد...</option>
+                            </select>
+                          </div>
+                          {batteryForm.location === '__new__' && (
+                            <input autoFocus value={newLocationInput} onChange={e => setNewLocationInput(e.target.value)} onBlur={() => { if (newLocationInput.trim()) { setBatteryForm(p => ({ ...p, location: newLocationInput.trim() })); setNewLocationInput(''); } else { setBatteryForm(p => ({ ...p, location: '' })); } }} placeholder="اكتب اسم الموقع الجديد..." style={{ padding: '7px', border: '1px solid #1a6b3c', borderRadius: '6px', width: '100%', fontSize: '13px', marginTop: '5px' }} />
+                          )}
+                        </div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🏷️ الماركة</label><input value={batteryForm.brand} onChange={e => setBatteryForm(p => ({ ...p, brand: e.target.value }))} placeholder="مثال: Trojan, Narada" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🌍 دولة الصنع</label><input value={batteryForm.country} onChange={e => setBatteryForm(p => ({ ...p, country: e.target.value }))} placeholder="مثال: الصين، أمريكا" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>⚡ السعة (Ah)</label><input type="number" min="0" value={batteryForm.capacity} onChange={e => setBatteryForm(p => ({ ...p, capacity: e.target.value }))} placeholder="مثال: 200" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
@@ -3867,12 +3941,32 @@ const App = () => {
                             {[1,1.5,2,3,4,5,7,10].map(y => <option key={y} value={y}>{y} سنة</option>)}
                           </select>
                         </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>حالة الخدمة</label>
+                          <select value={batteryForm.serviceStatus} onChange={e => setBatteryForm(p => ({ ...p, serviceStatus: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="active">✅ داخل الخدمة</option>
+                            <option value="retired">⬛ خارج الخدمة</option>
+                          </select>
+                        </div>
                         <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={batteryForm.notes} onChange={e => setBatteryForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
                         <button onClick={handleSaveBattery} style={{ background: '#1a6b3c', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                        <button onClick={() => { setShowAddBattery(false); setEditBatteryId(null); setBatteryForm({ name: '', location: '', brand: '', country: '', capacity: '', voltage: '', purchaseDate: '', warrantyYears: 1, lifespanYears: 2, purchasePrice: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                        <button onClick={() => { setShowAddBattery(false); setEditBatteryId(null); setBatteryForm({ name: '', location: '', brand: '', country: '', capacity: '', voltage: '', purchaseDate: '', warrantyYears: 1, lifespanYears: 2, purchasePrice: '', serviceStatus: 'active', notes: '' }); setNewLocationInput(''); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
+                      {/* إدارة المواقع */}
+                      {batteryLocations.length > 0 && (
+                        <div style={{ marginTop: '12px', background: '#f9f9f9', borderRadius: '8px', padding: '10px' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#555', marginBottom: '7px' }}>📍 إدارة المواقع المحفوظة:</div>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {batteryLocations.map(loc => (
+                              <span key={loc} style={{ background: '#e8f5e9', color: '#1a6b3c', fontSize: '11px', padding: '3px 8px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                {loc}
+                                <button onClick={() => saveBatteryLocations(batteryLocations.filter(l => l !== loc))} style={{ background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '12px', padding: '0', lineHeight: 1 }}>×</button>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <button onClick={() => setShowAddBattery(true)} style={{ width: '100%', padding: '11px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة بطارية</button>
@@ -3986,7 +4080,8 @@ const App = () => {
                             </div>
                           </div>
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            <button onClick={() => { setInverterForm({ name: inv.name, brand: inv.brand||'', capacity: inv.capacity||'', purchaseDate: inv.purchaseDate||'', warrantyYears: inv.warrantyYears, purchasePrice: inv.purchasePrice||'', notes: inv.notes||'' }); setEditInverterId(inv.id); setShowAddInverter(true); }} style={{ background: '#f0f9f6', border: '1px solid #1a6b3c', color: '#1a6b3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { saveInverters(inverters.map(i => i.id === inv.id ? { ...i, serviceStatus: i.serviceStatus === 'retired' ? 'active' : 'retired' } : i)); }} style={{ background: inv.serviceStatus === 'retired' ? '#d5f5e3' : '#fdebd0', border: `1px solid ${inv.serviceStatus === 'retired' ? '#27ae60' : '#e67e22'}`, color: inv.serviceStatus === 'retired' ? '#27ae60' : '#e67e22', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>{inv.serviceStatus === 'retired' ? '▶ تفعيل' : '⏹ تقاعد'}</button>
+                            <button onClick={() => { setInverterForm({ name: inv.name, brand: inv.brand||'', capacity: inv.capacity||'', purchaseDate: inv.purchaseDate||'', warrantyYears: inv.warrantyYears, purchasePrice: inv.purchasePrice||'', serviceStatus: inv.serviceStatus||'active', notes: inv.notes||'' }); setEditInverterId(inv.id); setShowAddInverter(true); }} style={{ background: '#f0f9f6', border: '1px solid #1a6b3c', color: '#1a6b3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
                             <button onClick={() => { if (window.confirm(`حذف "${inv.name}"؟`)) saveInverters(inverters.filter(i => i.id !== inv.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
                           </div>
                         </div>
@@ -4025,11 +4120,17 @@ const App = () => {
                           </select>
                         </div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر الشراء (ريال)</label><input type="number" min="0" value={inverterForm.purchasePrice} onChange={e => setInverterForm(p => ({ ...p, purchasePrice: e.target.value }))} placeholder="مثال: 3000" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>حالة الخدمة</label>
+                          <select value={inverterForm.serviceStatus} onChange={e => setInverterForm(p => ({ ...p, serviceStatus: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="active">✅ داخل الخدمة</option>
+                            <option value="retired">⬛ خارج الخدمة</option>
+                          </select>
+                        </div>
                         <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={inverterForm.notes} onChange={e => setInverterForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
                         <button onClick={handleSaveInverter} style={{ background: '#1a6b3c', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                        <button onClick={() => { setShowAddInverter(false); setEditInverterId(null); setInverterForm({ name: '', brand: '', capacity: '', purchaseDate: '', warrantyYears: 2, purchasePrice: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                        <button onClick={() => { setShowAddInverter(false); setEditInverterId(null); setInverterForm({ name: '', brand: '', capacity: '', purchaseDate: '', warrantyYears: 2, purchasePrice: '', serviceStatus: 'active', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
@@ -4138,6 +4239,124 @@ const App = () => {
                     <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) saveSolarMaint(solarMaintenance.filter(r => r.id !== rec.id)); }} />
                   )}
                   {solarMaintenance.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🔧</div><div>لا توجد سجلات صيانة بعد</div></div>}
+                </div>
+              )}
+            </div>
+
+              {/* ===== تبويب التوقع الذكي ===== */}
+              {solarTab === 'lifespan' && (
+                <div>
+                  <div style={{ background: '#f0f4ff', borderRadius: '10px', padding: '12px 15px', marginBottom: '15px', border: '1px solid #c5cae9', fontSize: '12px', color: '#2471a3' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '4px', fontSize: '13px' }}>🧠 كيف يعمل التوقع الذكي؟</div>
+                    <div style={{ color: '#555', lineHeight: '1.7' }}>
+                      يقارن عمر البطاريات الحالية بالبطاريات المتقاعدة السابقة لتقدير متى ستحتاج استبداله.
+                      كلما زادت البطاريات المتقاعدة، زادت دقة التوقع.
+                    </div>
+                  </div>
+
+                  {/* متوسط العمر الفعلي */}
+                  {batteryLifespanAnalysis.avgActualYears && (
+                    <div style={{ background: 'linear-gradient(135deg, #1a6b3c, #f39c12)', borderRadius: '10px', padding: '14px', marginBottom: '15px', color: 'white', textAlign: 'center' }}>
+                      <div style={{ fontSize: '12px', opacity: 0.9, marginBottom: '5px' }}>📊 متوسط العمر الفعلي (من {batteryLifespanAnalysis.retiredData.length} بطارية متقاعدة)</div>
+                      <div style={{ fontSize: '28px', fontWeight: 'bold' }}>{batteryLifespanAnalysis.avgActualYears} سنة</div>
+                      <div style={{ fontSize: '11px', opacity: 0.8, marginTop: '4px' }}>هذا هو العمر المتوقع الأدق بناءً على تجربتك الفعلية</div>
+                    </div>
+                  )}
+
+                  {/* البطاريات النشطة */}
+                  {batteryLifespanAnalysis.activeAnalysis.length > 0 && (
+                    <div style={{ marginBottom: '15px' }}>
+                      <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#1a6b3c', marginBottom: '10px' }}>🔋 توقع عمر البطاريات النشطة</div>
+                      {batteryLifespanAnalysis.activeAnalysis.map(bat => {
+                        const riskColors = { critical: '#e74c3c', high: '#e67e22', medium: '#f39c12', low: '#27ae60' };
+                        const riskBg = { critical: '#fff0f0', high: '#fff8f0', medium: '#fffbf0', low: '#f0fdf5' };
+                        const riskLabel = { critical: '🔴 خطر مرتفع', high: '🟠 مراقبة مكثفة', medium: '🟡 تابع', low: '🟢 بخير' };
+                        return (
+                          <div key={bat.id} style={{ background: riskBg[bat.riskLevel], border: `1.5px solid ${riskColors[bat.riskLevel]}40`, borderRadius: '10px', padding: '13px', marginBottom: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                              <div>
+                                <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a3a2a' }}>🔋 {bat.name}</div>
+                                <div style={{ fontSize: '12px', color: '#888', marginTop: '2px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                  {bat.brand && <span>🏷️ {bat.brand}</span>}
+                                  {bat.location && <span>📍 {bat.location}</span>}
+                                  <span>في الخدمة: {(bat.daysInService / 365).toFixed(1)} سنة ({bat.daysInService} يوم)</span>
+                                </div>
+                              </div>
+                              <span style={{ background: riskColors[bat.riskLevel], color: 'white', fontSize: '11px', padding: '3px 9px', borderRadius: '8px', fontWeight: 'bold' }}>
+                                {riskLabel[bat.riskLevel]}
+                              </span>
+                            </div>
+
+                            {/* شريط الاستخدام */}
+                            <div style={{ marginBottom: '10px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#888', marginBottom: '3px' }}>
+                                <span>نسبة العمر المستخدم</span>
+                                <span style={{ color: riskColors[bat.riskLevel], fontWeight: 'bold' }}>{bat.pctUsed}%</span>
+                              </div>
+                              <div style={{ height: '10px', background: '#eee', borderRadius: '5px' }}>
+                                <div style={{ height: '100%', width: `${Math.min(bat.pctUsed, 100)}%`, background: riskColors[bat.riskLevel], borderRadius: '5px' }} />
+                              </div>
+                            </div>
+
+                            {/* توقعات */}
+                            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4,1fr)', gap: '7px', fontSize: '11px' }}>
+                              <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: '1px solid #eee' }}>
+                                <div style={{ fontWeight: 'bold', color: '#2471a3' }}>{(bat.daysInService / 365).toFixed(1)} سنة</div>
+                                <div style={{ color: '#888' }}>العمر الحالي</div>
+                              </div>
+                              <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: '1px solid #eee' }}>
+                                <div style={{ fontWeight: 'bold', color: '#1a6b3c' }}>{bat.lifespanYears} سنة</div>
+                                <div style={{ color: '#888' }}>المقدّر عند الشراء</div>
+                              </div>
+                              {batteryLifespanAnalysis.avgActualYears && (
+                                <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: `1px solid ${riskColors[bat.riskLevel]}` }}>
+                                  <div style={{ fontWeight: 'bold', color: riskColors[bat.riskLevel] }}>{(bat.smartRemaining / 365).toFixed(1)} سنة</div>
+                                  <div style={{ color: '#888' }}>متبقي (ذكي)</div>
+                                </div>
+                              )}
+                              {batteryLifespanAnalysis.avgActualYears && (
+                                <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: '1px solid #eee' }}>
+                                  <div style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '10px' }}>{bat.smartEndDate.toLocaleDateString('ar-SA')}</div>
+                                  <div style={{ color: '#888' }}>تاريخ الاستبدال المتوقع</div>
+                                </div>
+                              )}
+                            </div>
+
+                            {!batteryLifespanAnalysis.avgActualYears && (
+                              <div style={{ marginTop: '8px', fontSize: '11px', color: '#aaa', textAlign: 'center' }}>
+                                أضف بطاريات متقاعدة للحصول على توقع ذكي أدق
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* البطاريات المتقاعدة */}
+                  {batteryLifespanAnalysis.retiredData.length > 0 && (
+                    <div>
+                      <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#888', marginBottom: '8px' }}>⬛ البطاريات المتقاعدة (مرجع للتوقع)</div>
+                      {batteryLifespanAnalysis.retiredData.map(bat => (
+                        <div key={bat.id} style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', opacity: 0.8 }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#555' }}>⬛ {bat.name}</div>
+                            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>
+                              {bat.brand && `🏷️ ${bat.brand} · `}عاشت {bat.actualYears} سنة ({bat.actualDays} يوم)
+                            </div>
+                          </div>
+                          <span style={{ background: '#555', color: 'white', fontSize: '12px', padding: '3px 10px', borderRadius: '6px', fontWeight: 'bold' }}>{bat.actualYears} سنة</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {batteryLifespanAnalysis.activeAnalysis.length === 0 && batteryLifespanAnalysis.retiredData.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '40px', color: '#bbb' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔋</div>
+                      <div>أضف بطاريات لبدء التحليل الذكي</div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
