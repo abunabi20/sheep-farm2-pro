@@ -269,7 +269,6 @@ const App = () => {
     serviceStatus: 'active', // active | retired
     notes: ''
   });
-  const [showManageLocations, setShowManageLocations] = useState(false);
   const [newLocationInput, setNewLocationInput] = useState('');
   const [panels, setPanels] = useState(() => {
     const s = localStorage.getItem('solarPanels');
