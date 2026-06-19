@@ -247,7 +247,10 @@ const App = () => {
   const [editFeedId, setEditFeedId] = useState(null);
   const [feedForm, setFeedForm] = useState({ name: '', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 3 });
   const [showAddPurchase, setShowAddPurchase] = useState(false);
-  const [purchaseForm, setPurchaseForm] = useState({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '' });
+  const [editPurchaseId, setEditPurchaseId] = useState(null);
+  const [purchaseForm, setPurchaseForm] = useState({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '', remainingFromPrev: '' });
+  const [showRemainingUpdate, setShowRemainingUpdate] = useState(false);
+  const [remainingUpdateData, setRemainingUpdateData] = useState({});
 
   // ===== نظام الطاقة الشمسية =====
   const [showSolarSystem, setShowSolarSystem] = useState(false);
@@ -301,8 +304,10 @@ const App = () => {
   const [showAddCylinder, setShowAddCylinder] = useState(false);
   const [editCylinderId, setEditCylinderId] = useState(null);
   const [cylinderForm, setCylinderForm] = useState({
-    name: '', description: '', location: '', sizeKg: 25, notes: ''
+    name: '', description: '', location: '', notes: ''
   });
+  const [gasLocations, setGasLocations] = useState(() => { const s = localStorage.getItem('gasLocations'); return s ? JSON.parse(s) : []; });
+  const [newGasLocationInput, setNewGasLocationInput] = useState('');
   const [showAddRefill, setShowAddRefill] = useState(false);
   const [refillCylinderId, setRefillCylinderId] = useState(null);
   const [refillForm, setRefillForm] = useState({
@@ -1163,40 +1168,33 @@ const App = () => {
   // ===== الاستهلاك الذكي من سجل المشتريات =====
   const smartConsumption = useMemo(() => {
     return feeds.map(feed => {
-      // كل مشتريات هذا العلف مرتبة بالتاريخ
       const purchases = [...feedPurchases.filter(p => p.feedId === feed.id)]
         .sort((a, b) => new Date(a.date) - new Date(b.date));
 
       if (purchases.length < 2) {
-        return {
-          ...feed,
-          purchases,
-          intervals: [],
-          avgDailyBags: null,
-          avgDailyKg: null,
-          lastPurchaseDate: purchases[0]?.date || null,
-          nextPurchaseEstimate: null,
-          daysUntilNext: null,
-          confidence: 'low',
-          needsAlert: false,
-          weeklyCost: null,
-          monthlyCost: null,
-          yearlyCost: null,
-        };
+        return { ...feed, purchases, intervals: [], avgDailyBags: null, avgDailyKg: null, lastPurchaseDate: purchases[0]?.date || null, nextPurchaseEstimate: null, daysUntilNext: null, confidence: 'low', needsAlert: false, weeklyCost: null, monthlyCost: null, yearlyCost: null };
       }
 
-      // احسب الاستهلاك اليومي من كل فجوة
+      // احسب الاستهلاك من كل فجوة — مع الأخذ بالحسبان الكمية المتبقية
       const intervals = [];
       for (let i = 0; i < purchases.length - 1; i++) {
         const days = Math.floor((new Date(purchases[i+1].date) - new Date(purchases[i].date)) / 86400000);
         if (days > 0) {
+          // الكمية المستهلكة = كمية الشراء السابق - المتبقي عند الشراء الجديد
+          const prevQty = parseFloat(purchases[i].qty) || 0;
+          const remainingAtNext = parseFloat(purchases[i+1].remainingFromPrev) || 0;
+          const consumed = prevQty - remainingAtNext;
+          const effectiveConsumed = consumed > 0 ? consumed : prevQty; // fallback للطريقة القديمة
           intervals.push({
             from: purchases[i].date,
             to: purchases[i+1].date,
-            qty: purchases[i].qty,
+            qty: prevQty,
+            remainingAtNext,
+            consumed: effectiveConsumed,
             days,
-            dailyBags: purchases[i].qty / days,
-            dailyKg: (purchases[i].qty * (parseFloat(feed.unitWeight) || 1)) / days,
+            dailyBags: effectiveConsumed / days,
+            dailyKg: (effectiveConsumed * (parseFloat(feed.unitWeight) || 1)) / days,
+            hasRemaining: purchases[i+1].remainingFromPrev !== undefined && purchases[i+1].remainingFromPrev !== '',
           });
         }
       }
@@ -1273,15 +1271,27 @@ const App = () => {
     const feed = feeds.find(f => f.id === purchaseForm.feedId);
     if (!feed) return;
     const qty = parseFloat(purchaseForm.qty) || 0;
-    // تحديث المخزون
-    const updatedFeeds = feeds.map(f => f.id === purchaseForm.feedId ? { ...f, stock: (parseFloat(f.stock) || 0) + qty } : f);
-    saveFeeds(updatedFeeds);
-    // حفظ الشراء
-    const newPurchase = { id: `fp_${Date.now()}`, ...purchaseForm, qty, pricePerUnit: parseFloat(purchaseForm.pricePerUnit) || 0, totalCost: qty * (parseFloat(purchaseForm.pricePerUnit) || 0), feedName: feed.name };
-    saveFeedPurchases([...feedPurchases, newPurchase]);
-    setPurchaseForm({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '' });
+    const remaining = parseFloat(purchaseForm.remainingFromPrev) || 0;
+
+    if (editPurchaseId) {
+      // تعديل — لا تغير المخزون
+      const updated = feedPurchases.map(p => p.id === editPurchaseId ? {
+        ...p, ...purchaseForm, qty, pricePerUnit: parseFloat(purchaseForm.pricePerUnit) || 0,
+        totalCost: qty * (parseFloat(purchaseForm.pricePerUnit) || 0),
+        feedName: feed.name, remainingFromPrev: remaining
+      } : p);
+      saveFeedPurchases(updated);
+      setEditPurchaseId(null);
+    } else {
+      // إضافة جديدة — حدّث المخزون
+      const updatedFeeds = feeds.map(f => f.id === purchaseForm.feedId ? { ...f, stock: (parseFloat(f.stock) || 0) + qty } : f);
+      saveFeeds(updatedFeeds);
+      const newPurchase = { id: `fp_${Date.now()}`, ...purchaseForm, qty, pricePerUnit: parseFloat(purchaseForm.pricePerUnit) || 0, totalCost: qty * (parseFloat(purchaseForm.pricePerUnit) || 0), feedName: feed.name, remainingFromPrev: remaining };
+      saveFeedPurchases([...feedPurchases, newPurchase]);
+      alert(`✓ تم تسجيل شراء ${qty} ${feed.unit} من ${feed.name}`);
+    }
+    setPurchaseForm({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '', remainingFromPrev: '' });
     setShowAddPurchase(false);
-    alert(`✓ تم تسجيل شراء ${qty} ${feed.unit} من ${feed.name}`);
   };
 
   // ===== دوال الطاقة الشمسية =====
@@ -1498,6 +1508,36 @@ const App = () => {
     return { total, avgMonthly, avgYearly };
   }, [gasStats]);
 
+  // ===== تحليل ذكي للغاز مع تنبيه التسريب =====
+  const gasSmartAnalysis = useMemo(() => {
+    return gasCylinders.map(cyl => {
+      const refills = [...(cyl.refills || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+      if (refills.length < 2) return { ...cyl, intervals: [], avgDays: null, smartDaysLeft: null, smartNextDate: null, leakAlert: false };
+
+      const intervals = [];
+      for (let i = 0; i < refills.length - 1; i++) {
+        const days = Math.floor((new Date(refills[i+1].date) - new Date(refills[i].date)) / 86400000);
+        if (days > 0) intervals.push({ from: refills[i].date, to: refills[i+1].date, days });
+      }
+      // متوسط مرجّح للأحدث
+      const totalW = intervals.reduce((s, _, i) => s + (i + 1), 0);
+      const avgDays = Math.round(intervals.reduce((s, iv, i) => s + iv.days * (i + 1), 0) / totalW);
+
+      const lastRefill = refills[refills.length - 1];
+      const daysSinceLast = Math.floor((new Date() - new Date(lastRefill.date)) / 86400000);
+      const smartDaysLeft = Math.max(0, avgDays - daysSinceLast);
+      const smartNextDate = new Date(new Date(lastRefill.date).getTime() + avgDays * 86400000).toISOString().split('T')[0];
+
+      // تنبيه اسبوعين قبل
+      const alertSoon = smartDaysLeft <= 14;
+      // تنبيه تسريب: انتهى 30% قبل المعدل
+      const leakThreshold = avgDays * 0.7;
+      const leakAlert = daysSinceLast < leakThreshold && smartDaysLeft === 0;
+
+      return { ...cyl, refills, intervals, avgDays, daysSinceLast, smartDaysLeft, smartNextDate, alertSoon, leakAlert, lastRefillDate: lastRefill.date };
+    });
+  }, [gasCylinders]);
+
   // ===== تنبيهات مركزية =====
   const allAlerts = useMemo(() => {
     const alerts = [];
@@ -1570,10 +1610,12 @@ const App = () => {
         alerts.push({ id: `feed-${feed.id}`, system: '🌾 الأعلاف', item: feed.name, msg: feed.daysLeft !== null ? `يكفي ${feed.daysLeft} يوم فقط — المخزون منخفض` : 'المخزون صفر!', urgency: feed.daysLeft === 0 || feed.daysLeft === null ? 'critical' : feed.daysLeft <= 7 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowFeedSystem(true); setFeedTab('forecast'); } });
     });
 
-    // 🔵 الغاز — تعبئة قريبة
-    gasStats.forEach(cyl => {
-      if (cyl.needsAlert)
-        alerts.push({ id: `gas-${cyl.id}`, system: '🔵 الغاز', item: cyl.name, msg: cyl.daysLeft !== null ? `يحتاج تعبئة — باقي تقريباً ${cyl.daysLeft} يوم` : 'يحتاج تعبئة!', urgency: cyl.daysLeft === 0 || cyl.daysLeft === null ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowGasSystem(true); setGasTab('cylinders'); } });
+    // 🔵 الغاز — تنبيه أسبوعين مبكر + تنبيه تسريب
+    gasSmartAnalysis.forEach(cyl => {
+      if (cyl.leakAlert)
+        alerts.push({ id: `gas-leak-${cyl.id}`, system: '🔵 الغاز — تسريب محتمل!', item: cyl.name, msg: `⚠️ الغاز انتهى أبكر من المعدل بأكثر من 30% — تحقق من التسريبات`, urgency: 'critical', action: () => { setShowAlertsCenter(false); setShowGasSystem(true); setGasTab('smart'); } });
+      else if (cyl.alertSoon && cyl.smartDaysLeft !== null)
+        alerts.push({ id: `gas-${cyl.id}`, system: '🔵 الغاز', item: cyl.name, msg: cyl.smartDaysLeft === 0 ? 'حان وقت التعبئة!' : `باقي ${cyl.smartDaysLeft} يوم للتعبئة (التاريخ المتوقع: ${cyl.smartNextDate ? new Date(cyl.smartNextDate).toLocaleDateString('en-SA') : ''})`, urgency: cyl.smartDaysLeft <= 3 ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowGasSystem(true); setGasTab('smart'); } });
     });
 
     // 🔧 صيانة المواطير القادمة
@@ -1604,15 +1646,22 @@ const App = () => {
 
   const handleSaveCylinder = () => {
     if (!cylinderForm.name) { alert('أدخل اسم الأسطوانة'); return; }
-    const data = { ...cylinderForm, sizeKg: parseFloat(cylinderForm.sizeKg) || 25 };
+    const data = { name: cylinderForm.name, location: cylinderForm.location, description: cylinderForm.description, notes: cylinderForm.notes };
     let updated;
     if (editCylinderId) {
       updated = gasCylinders.map(c => c.id === editCylinderId ? { ...c, ...data } : c);
     } else {
       updated = [...gasCylinders, { id: `gas_${Date.now()}`, ...data, refills: [] }];
     }
+    // حفظ الموقع في القائمة
+    if (data.location && !gasLocations.includes(data.location)) {
+      const newLocs = [...gasLocations, data.location];
+      setGasLocations(newLocs);
+      localStorage.setItem('gasLocations', JSON.stringify(newLocs));
+      if (user) set(ref(database, `users/${user.id}/gasLocations`), newLocs).catch(() => {});
+    }
     saveGasCylinders(updated);
-    setCylinderForm({ name: '', description: '', location: '', sizeKg: 25, notes: '' });
+    setCylinderForm({ name: '', description: '', location: '', notes: '' });
     setEditCylinderId(null);
     setShowAddCylinder(false);
   };
@@ -2071,16 +2120,16 @@ const App = () => {
             </button>
             <button onClick={() => { setShowAgeReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👴 تقرير العويد</button>
             <button onClick={() => { setShowNumbersReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔢 تقرير الأرقام</button>
-            <button onClick={() => { setShowProductionReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#c0392b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📈 تقرير الإنتاج</button>
             <button onClick={() => { setShowSalesReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#d4ac0d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>💰 المبيعات والأرباح</button>
-            <button onClick={() => { setShowVetLibrary(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🩺 المكتبة البيطرية</button>
-            <button onClick={() => { setShowPumpSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1c2833', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>⚙️ مراقبة المواطير</button>
             <button onClick={() => { setShowFeedSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6e4b1f', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🌾 إدارة الأعلاف</button>
+            <button onClick={() => { setShowVetLibrary(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🩺 المكتبة البيطرية</button>
+            <button onClick={() => { setShowWorkersSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#784212', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👷 إدارة العمال</button>
+            <button onClick={() => { setShowProductionReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#c0392b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📈 تقرير الإنتاج</button>
+            <button onClick={() => { setShowStudSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6d4c41', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🐏 إدارة الفحول</button>
+            <button onClick={() => { setShowPumpSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1c2833', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>⚙️ مراقبة المواطير</button>
             <button onClick={() => { setShowSolarSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>☀️ الطاقة الشمسية</button>
             <button onClick={() => { setShowGasSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2e4057', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔵 مراقبة الغاز</button>
-            <button onClick={() => { setShowWorkersSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#784212', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👷 إدارة العمال</button>
             <button onClick={() => { setShowFarmMaintSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#515a5a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🏗️ صيانة المزرعة</button>
-            <button onClick={() => { setShowStudSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6d4c41', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🐏 إدارة الفحول</button>
             <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
             <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
               <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
@@ -3487,13 +3536,14 @@ const App = () => {
             </div>
 
             {/* التبويبات */}
-            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f5f7fa' }}>
+            <div style={{ display: 'flex', overflowX: 'auto', borderBottom: '2px solid #eee', background: '#f5f7fa' }}>
               {[
                 { key: 'cylinders', label: '🔵 الأسطوانات' },
                 { key: 'refills', label: '📋 سجل التعبئة' },
-                { key: 'stats', label: '📊 الإحصائيات والتكاليف' },
+                { key: 'stats', label: '📊 الإحصائيات' },
+                { key: 'smart', label: '🧠 التوقع الذكي' },
               ].map(tab => (
-                <button key={tab.key} onClick={() => setGasTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: gasTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: gasTab === tab.key ? '3px solid #2e4057' : '3px solid transparent', cursor: 'pointer', fontWeight: gasTab === tab.key ? 'bold' : 'normal', color: gasTab === tab.key ? '#2e4057' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
+                <button key={tab.key} onClick={() => setGasTab(tab.key)} style={{ flex: '0 0 auto', padding: '11px 14px', background: gasTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: gasTab === tab.key ? '3px solid #2e4057' : '3px solid transparent', cursor: 'pointer', fontWeight: gasTab === tab.key ? 'bold' : 'normal', color: gasTab === tab.key ? '#2e4057' : '#888', fontSize: isMobile ? '11px' : '13px', whiteSpace: 'nowrap' }}>
                   {tab.label}
                 </button>
               ))}
@@ -3601,18 +3651,33 @@ const App = () => {
                       <h4 style={{ color: '#2e4057', margin: '0 0 12px' }}>{editCylinderId ? '✏️ تعديل أسطوانة' : '➕ إضافة أسطوانة'}</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم الأسطوانة *</label><input value={cylinderForm.name} onChange={e => setCylinderForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: غاز المطبخ الرئيسي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
-                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📍 الموقع</label><input value={cylinderForm.location} onChange={e => setCylinderForm(p => ({ ...p, location: e.target.value }))} placeholder="مثال: المطبخ الرئيسي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
-                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الوزن (كجم)</label>
-                          <select value={cylinderForm.sizeKg} onChange={e => setCylinderForm(p => ({ ...p, sizeKg: parseFloat(e.target.value) }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
-                            {[5, 10, 12.5, 15, 25, 50].map(s => <option key={s} value={s}>{s} كجم</option>)}
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📍 الموقع</label>
+                          <select value={cylinderForm.location} onChange={e => setCylinderForm(p => ({ ...p, location: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="">— اختر موقعاً —</option>
+                            {gasLocations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                            <option value="__new__">✏️ موقع جديد...</option>
                           </select>
+                          {cylinderForm.location === '__new__' && (
+                            <input autoFocus value={newGasLocationInput} onChange={e => setNewGasLocationInput(e.target.value)} onBlur={() => { if (newGasLocationInput.trim()) { setCylinderForm(p => ({ ...p, location: newGasLocationInput.trim() })); setNewGasLocationInput(''); } else setCylinderForm(p => ({ ...p, location: '' })); }} placeholder="اكتب اسم الموقع..." style={{ padding: '7px', border: '1px solid #2e4057', borderRadius: '6px', width: '100%', fontSize: '13px', marginTop: '5px' }} />
+                          )}
+                          {/* إدارة المواقع */}
+                          {gasLocations.length > 0 && (
+                            <div style={{ marginTop: '6px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {gasLocations.map(loc => (
+                                <span key={loc} style={{ background: '#e8eaf6', color: '#2e4057', fontSize: '10px', padding: '2px 6px', borderRadius: '5px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  {loc} <button onClick={() => setGasLocations(gasLocations.filter(l => l !== loc))} style={{ background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '11px', padding: 0 }}>×</button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وصف / مميزات</label><input value={cylinderForm.description} onChange={e => setCylinderForm(p => ({ ...p, description: e.target.value }))} placeholder="مثال: للأفران، للمدفأة..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وصف / مميزات</label><input value={cylinderForm.description} onChange={e => setCylinderForm(p => ({ ...p, description: e.target.value }))} placeholder="مثال: للأفران، للمدفأة..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={cylinderForm.notes} onChange={e => setCylinderForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
                         <button onClick={handleSaveCylinder} style={{ background: '#2e4057', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                        <button onClick={() => { setShowAddCylinder(false); setEditCylinderId(null); setCylinderForm({ name: '', description: '', location: '', sizeKg: 25, notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                        <button onClick={() => { setShowAddCylinder(false); setEditCylinderId(null); setCylinderForm({ name: '', description: '', location: '', notes: '' }); setNewGasLocationInput(''); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
@@ -3750,6 +3815,88 @@ const App = () => {
                       ✅ سجّل كل تعبئة فور حدوثها للحصول على معدل دقيق
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* ===== تبويب التوقع الذكي للغاز ===== */}
+              {gasTab === 'smart' && (
+                <div>
+                  <div style={{ background: '#f0f4ff', borderRadius: '10px', padding: '12px 15px', marginBottom: '15px', border: '1px solid #c5cae9', fontSize: '12px', color: '#2471a3' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '4px', fontSize: '13px' }}>🧠 كيف يعمل التوقع الذكي؟</div>
+                    <div style={{ color: '#555', lineHeight: '1.7' }}>
+                      يحسب متوسط عدد الأيام بين التعبئات تاريخياً ويتوقع التعبئة القادمة.<br/>
+                      تنبيه مبكر قبل أسبوعين · تنبيه تسريب إذا انتهى الغاز أبكر من المعدل بـ 30%+
+                    </div>
+                  </div>
+
+                  {gasSmartAnalysis.map(cyl => {
+                    if (!cyl.avgDays) return (
+                      <div key={cyl.id} style={{ background: '#f9f9f9', borderRadius: '10px', padding: '12px', marginBottom: '10px', border: '1px solid #eee' }}>
+                        <div style={{ fontWeight: 'bold', color: '#2e4057' }}>🔵 {cyl.name}</div>
+                        <div style={{ fontSize: '12px', color: '#bbb', marginTop: '5px' }}>يحتاج تعبئتين على الأقل لحساب التوقع</div>
+                      </div>
+                    );
+                    const pct = cyl.avgDays ? Math.max(0, Math.round(((cyl.avgDays - cyl.daysSinceLast) / cyl.avgDays) * 100)) : null;
+                    const barColor = cyl.leakAlert ? '#e74c3c' : cyl.alertSoon ? (cyl.smartDaysLeft <= 3 ? '#e74c3c' : '#e67e22') : '#27ae60';
+                    return (
+                      <div key={cyl.id} style={{ background: cyl.leakAlert ? '#fff0f0' : cyl.alertSoon ? '#fff8f0' : '#f9fbff', border: `2px solid ${barColor}`, borderRadius: '12px', padding: '14px', marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a2a3a', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              🔵 {cyl.name}
+                              {cyl.leakAlert && <span style={{ background: '#e74c3c', color: 'white', fontSize: '11px', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold' }}>⚠️ تسريب محتمل!</span>}
+                              {cyl.alertSoon && !cyl.leakAlert && <span style={{ background: barColor, color: 'white', fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}>{cyl.smartDaysLeft === 0 ? 'حان التعبئة!' : `تعبئة قريباً`}</span>}
+                            </div>
+                            {cyl.location && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>📍 {cyl.location}</div>}
+                          </div>
+                          <div style={{ textAlign: 'center', background: 'white', borderRadius: '8px', padding: '6px 12px', border: `1px solid ${barColor}` }}>
+                            <div style={{ fontWeight: 'bold', color: barColor, fontSize: '18px' }}>{cyl.smartDaysLeft} يوم</div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>متبقي</div>
+                          </div>
+                        </div>
+
+                        {/* شريط المتبقي */}
+                        {pct !== null && (
+                          <div style={{ marginBottom: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#888', marginBottom: '3px' }}>
+                              <span>المتبقي من الدورة الحالية</span>
+                              <span style={{ color: barColor, fontWeight: 'bold' }}>{pct}%</span>
+                            </div>
+                            <div style={{ height: '8px', background: '#eee', borderRadius: '4px' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: '4px' }} />
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '7px', fontSize: '12px' }}>
+                          <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: '1px solid #eee' }}><div style={{ fontWeight: 'bold', color: '#2e4057' }}>{cyl.avgDays} يوم</div><div style={{ color: '#888', fontSize: '10px' }}>متوسط الدورة</div></div>
+                          <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: '1px solid #eee' }}><div style={{ fontWeight: 'bold', color: '#555' }}>{cyl.daysSinceLast} يوم</div><div style={{ color: '#888', fontSize: '10px' }}>منذ آخر تعبئة</div></div>
+                          <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: '1px solid #eee' }}><div style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '10px' }}>{cyl.smartNextDate}</div><div style={{ color: '#888', fontSize: '10px' }}>التعبئة المتوقعة</div></div>
+                          <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: '1px solid #eee' }}><div style={{ fontWeight: 'bold', color: '#27ae60' }}>{cyl.intervals?.length || 0}</div><div style={{ color: '#888', fontSize: '10px' }}>فترات محسوبة</div></div>
+                        </div>
+
+                        {cyl.leakAlert && (
+                          <div style={{ marginTop: '10px', background: '#fff0f0', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', color: '#e74c3c', fontWeight: 'bold' }}>
+                            ⚠️ تحذير: انتهى الغاز أبكر بكثير من المعدل — تحقق من التسريبات فوراً!
+                          </div>
+                        )}
+
+                        {/* سجل الفترات */}
+                        {cyl.intervals && cyl.intervals.length > 0 && (
+                          <div style={{ marginTop: '10px', background: '#f5f7fa', borderRadius: '8px', padding: '8px' }}>
+                            <div style={{ fontSize: '11px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>📋 الفترات السابقة:</div>
+                            {cyl.intervals.map((iv, i) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#666', padding: '3px 0', borderBottom: i < cyl.intervals.length-1 ? '1px solid #eee' : 'none' }}>
+                                <span>{iv.from} → {iv.to}</span>
+                                <span style={{ fontWeight: 'bold', color: '#2e4057' }}>{iv.days} يوم</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {gasSmartAnalysis.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🔵</div><div>أضف أسطوانات وسجل تعبئاتها للحصول على التوقع</div></div>}
                 </div>
               )}
             </div>
@@ -4392,6 +4539,7 @@ const App = () => {
                 { key: 'consumption', label: '⚙️ معدلات الاستهلاك' },
                 { key: 'forecast', label: '📊 التوقعات والتكاليف' },
                 { key: 'smart', label: '🧠 الاستهلاك الذكي' },
+                { key: 'stockupdate', label: '📋 تحديث المخزون' },
               ].map(tab => (
                 <button key={tab.key} onClick={() => setFeedTab(tab.key)} style={{ flex: '0 0 auto', padding: '11px 14px', background: feedTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: feedTab === tab.key ? '3px solid #6e4b1f' : '3px solid transparent', cursor: 'pointer', fontWeight: feedTab === tab.key ? 'bold' : 'normal', color: feedTab === tab.key ? '#6e4b1f' : '#888', fontSize: isMobile ? '11px' : '12px', whiteSpace: 'nowrap' }}>
                   {tab.label}
@@ -4483,7 +4631,7 @@ const App = () => {
                 <div>
                   {showAddPurchase ? (
                     <div style={{ background: '#f0f9f6', border: '2px solid #27ae60', borderRadius: '10px', padding: '15px', marginBottom: '15px' }}>
-                      <h4 style={{ color: '#27ae60', margin: '0 0 12px' }}>🛒 تسجيل شراء علف</h4>
+                      <h4 style={{ color: '#27ae60', margin: '0 0 12px' }}>{editPurchaseId ? '✏️ تعديل شراء' : '🛒 تسجيل شراء علف'}</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع العلف *</label>
                           <select value={purchaseForm.feedId} onChange={e => setPurchaseForm(p => ({ ...p, feedId: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
@@ -4494,6 +4642,11 @@ const App = () => {
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء</label><input type="date" value={purchaseForm.date} onChange={e => setPurchaseForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الكمية المشتراة ({purchaseForm.feedId ? feeds.find(f => f.id === purchaseForm.feedId)?.unit : 'وحدة'})</label><input type="number" min="0" step="0.5" value={purchaseForm.qty} onChange={e => setPurchaseForm(p => ({ ...p, qty: e.target.value }))} placeholder="مثال: 10" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر الوحدة (ريال)</label><input type="number" min="0" step="0.5" value={purchaseForm.pricePerUnit} onChange={e => setPurchaseForm(p => ({ ...p, pricePerUnit: e.target.value }))} placeholder="مثال: 45" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div style={{ gridColumn: isMobile ? '1' : '1 / -1', background: '#fef9e7', borderRadius: '8px', padding: '10px', border: '1px solid #f0e68c' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px', color: '#b7950b' }}>📦 المتبقي من الشراء السابق ({purchaseForm.feedId ? feeds.find(f => f.id === purchaseForm.feedId)?.unit : 'وحدة'})</label>
+                          <input type="number" min="0" step="0.5" value={purchaseForm.remainingFromPrev} onChange={e => setPurchaseForm(p => ({ ...p, remainingFromPrev: e.target.value }))} placeholder="كم كيس / وحدة كانت متبقية عند شراء هذه الدفعة؟ (0 = لا شيء)" style={{ padding: '8px', border: '1px solid #f0e68c', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                          <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>💡 يُستخدم في الحساب الذكي لتحديد الاستهلاك الفعلي</div>
+                        </div>
                         {purchaseForm.qty && purchaseForm.pricePerUnit && (
                           <div style={{ gridColumn: isMobile ? '1' : '1 / -1', background: '#d5f5e3', borderRadius: '6px', padding: '8px', textAlign: 'center', fontSize: '13px', fontWeight: 'bold', color: '#27ae60' }}>
                             💵 الإجمالي: {(parseFloat(purchaseForm.qty) * parseFloat(purchaseForm.pricePerUnit)).toLocaleString()} ريال
@@ -4502,8 +4655,8 @@ const App = () => {
                         <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>ملاحظات</label><input value={purchaseForm.notes} onChange={e => setPurchaseForm(p => ({ ...p, notes: e.target.value }))} placeholder="اختياري" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
-                        <button onClick={handleSavePurchase} style={{ background: '#27ae60', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ وتحديث المخزون</button>
-                        <button onClick={() => setShowAddPurchase(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                        <button onClick={handleSavePurchase} style={{ background: '#27ae60', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>{editPurchaseId ? '✓ حفظ التعديل' : '✓ حفظ وتحديث المخزون'}</button>
+                        <button onClick={() => { setShowAddPurchase(false); setEditPurchaseId(null); setPurchaseForm({ feedId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', notes: '', remainingFromPrev: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
@@ -4546,14 +4699,16 @@ const App = () => {
                             <div>
                               <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010' }}>🌾 {p.feedName}</div>
                               <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                <span>📅 {new Date(p.date).toLocaleDateString('ar-SA')}</span>
+                                <span>📅 {new Date(p.date).toLocaleDateString('en-GB')}</span>
                                 <span>📦 {p.qty} {feeds.find(f => f.id === p.feedId)?.unit || ''}</span>
                                 <span>💰 {p.pricePerUnit} ر/وحدة</span>
+                                {p.remainingFromPrev > 0 && <span style={{ color: '#b7950b' }}>📦 متبقي: {p.remainingFromPrev}</span>}
                                 {p.notes && <span>📝 {p.notes}</span>}
                               </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                               <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '14px' }}>{p.totalCost.toLocaleString()} ر</span>
+                              <button onClick={() => { setPurchaseForm({ feedId: p.feedId, date: p.date, qty: String(p.qty), pricePerUnit: String(p.pricePerUnit), notes: p.notes||'', remainingFromPrev: String(p.remainingFromPrev||'') }); setEditPurchaseId(p.id); setShowAddPurchase(true); }} style={{ background: '#f0f9f6', border: '1px solid #27ae60', color: '#27ae60', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
                               <button onClick={() => { if (window.confirm('حذف هذا الشراء؟ سيتم خصم الكمية من المخزون')) { const feed = feeds.find(f => f.id === p.feedId); if (feed) saveFeeds(feeds.map(f => f.id === p.feedId ? { ...f, stock: Math.max(0, (parseFloat(f.stock) || 0) - p.qty) } : f)); saveFeedPurchases(feedPurchases.filter(x => x.id !== p.id)); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
                             </div>
                           </div>
@@ -4841,6 +4996,78 @@ const App = () => {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ===== تبويب تحديث المخزون ===== */}
+              {feedTab === 'stockupdate' && (
+                <div>
+                  <div style={{ background: '#fef9e7', borderRadius: '10px', padding: '12px 15px', marginBottom: '15px', border: '1px solid #f0e68c', fontSize: '12px', color: '#856404' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '5px', fontSize: '13px' }}>📋 لماذا هذا التبويب؟</div>
+                    <div style={{ lineHeight: '1.8', color: '#555' }}>
+                      عند شراء علف جديد قبل نفاد القديم — سجّل هنا المتبقي من كل نوع بتاريخ الشراء الجديد.<br/>
+                      هذا يُحسّن دقة الحساب الذكي لأن الاستهلاك الفعلي = الكمية المشتراة − المتبقي عند الشراء التالي.
+                    </div>
+                  </div>
+
+                  {/* أحدث شراء لكل علف */}
+                  {feeds.map(feed => {
+                    const purchases = [...feedPurchases.filter(p => p.feedId === feed.id)]
+                      .sort((a, b) => new Date(b.date) - new Date(a.date));
+                    const lastPurchase = purchases[0];
+                    if (!lastPurchase) return null;
+
+                    const hasRemaining = lastPurchase.remainingFromPrev !== undefined && lastPurchase.remainingFromPrev !== '';
+                    return (
+                      <div key={feed.id} style={{ background: 'white', border: `1.5px solid ${hasRemaining ? '#27ae60' : '#f0e68c'}`, borderRadius: '10px', padding: '13px 15px', marginBottom: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a3010' }}>🌾 {feed.name}</div>
+                            <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
+                              آخر شراء: {new Date(lastPurchase.date).toLocaleDateString('en-GB')} — {lastPurchase.qty} {feed.unit}
+                            </div>
+                          </div>
+                          {hasRemaining
+                            ? <span style={{ background: '#d5f5e3', color: '#27ae60', fontSize: '11px', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>✅ محدّث</span>
+                            : <span style={{ background: '#fef9e7', color: '#b7950b', fontSize: '11px', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>⏳ يحتاج تحديث</span>
+                          }
+                        </div>
+
+                        <div style={{ background: '#fef9e7', borderRadius: '8px', padding: '10px 12px', border: '1px solid #f0e68c' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#b7950b', display: 'block', marginBottom: '6px' }}>
+                            📦 المتبقي من الشراء السابق عند تاريخ {new Date(lastPurchase.date).toLocaleDateString('en-GB')} ({feed.unit}):
+                          </label>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <input
+                              type="number" min="0" step="0.5"
+                              defaultValue={hasRemaining ? lastPurchase.remainingFromPrev : ''}
+                              placeholder="0 = لا شيء، 0.5 = نصف وحدة..."
+                              style={{ padding: '8px', border: '1px solid #f0e68c', borderRadius: '6px', flex: 1, fontSize: '13px' }}
+                              id={`remaining-${feed.id}`}
+                            />
+                            <button onClick={() => {
+                              const val = document.getElementById(`remaining-${feed.id}`)?.value;
+                              if (val === '' || val === undefined) { alert('أدخل القيمة — يقبل 0'); return; }
+                              const updated = feedPurchases.map(p =>
+                                p.id === lastPurchase.id ? { ...p, remainingFromPrev: parseFloat(val) } : p
+                              );
+                              saveFeedPurchases(updated);
+                            }} style={{ background: '#b7950b', color: 'white', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap' }}>
+                              ✓ حفظ
+                            </button>
+                          </div>
+                          {hasRemaining && (
+                            <div style={{ fontSize: '11px', color: '#27ae60', marginTop: '4px', fontWeight: 'bold' }}>
+                              ✅ مسجّل: {lastPurchase.remainingFromPrev} {feed.unit} متبقي
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {feeds.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>أضف أنواع علف أولاً</div>}
+                  {feeds.length > 0 && feedPurchases.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>سجّل مشتريات أولاً لتظهر هنا</div>}
                 </div>
               )}
             </div>
