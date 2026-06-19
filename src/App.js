@@ -1640,7 +1640,7 @@ const App = () => {
     // ترتيب: critical أولاً ثم high ثم medium
     const order = { critical: 0, high: 1, medium: 2 };
     return alerts.sort((a, b) => order[a.urgency] - order[b.urgency]);
-  }, [batteries, inverters, panels, pumps, petrolStats, medicines, feedForecast, gasStats, gasSmartAnalysis, pumpMaintenance, solarMaintenance, farmMaintenance]);
+  }, [batteries, inverters, panels, pumps, petrolStats, medicines, feedForecast, gasSmartAnalysis, pumpMaintenance, solarMaintenance, farmMaintenance]);
 
   const handleSaveCylinder = () => {
     if (!cylinderForm.name) { alert('أدخل اسم الأسطوانة'); return; }
