@@ -337,6 +337,15 @@ const App = () => {
   const [showAddFood, setShowAddFood] = useState(false);
   const [editFoodId, setEditFoodId] = useState(null);
   const [foodForm, setFoodForm] = useState({ date: new Date().toISOString().split('T')[0], type: 'weekly', totalCost: '', notes: '' });
+
+  // ===== تحديثات المخزون اليدوية =====
+  const [manualStockUpdates, setManualStockUpdates] = useState(() => {
+    const s = localStorage.getItem('manualStockUpdates');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showManualUpdate, setShowManualUpdate] = useState(false);
+  const [manualUpdateDate, setManualUpdateDate] = useState(new Date().toISOString().split('T')[0]);
+  const [manualUpdateValues, setManualUpdateValues] = useState({});
   const [foodRecords, setFoodRecords] = useState(() => { const s = localStorage.getItem('workerFoodRecords'); return s ? JSON.parse(s) : []; });
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
@@ -1178,11 +1187,10 @@ const App = () => {
       for (let i = 0; i < purchases.length - 1; i++) {
         const days = Math.floor((new Date(purchases[i+1].date) - new Date(purchases[i].date)) / 86400000);
         if (days > 0) {
-          // الكمية المستهلكة = كمية الشراء السابق - المتبقي عند الشراء الجديد
           const prevQty = parseFloat(purchases[i].qty) || 0;
           const remainingAtNext = parseFloat(purchases[i+1].remainingFromPrev) || 0;
           const consumed = prevQty - remainingAtNext;
-          const effectiveConsumed = consumed > 0 ? consumed : prevQty; // fallback للطريقة القديمة
+          const effectiveConsumed = consumed > 0 ? consumed : prevQty;
           intervals.push({
             from: purchases[i].date,
             to: purchases[i+1].date,
@@ -1204,20 +1212,45 @@ const App = () => {
       const weightedAvgBags = intervals.reduce((s, iv, i) => s + iv.dailyBags * (i + 1), 0) / totalWeight;
       const weightedAvgKg = intervals.reduce((s, iv, i) => s + iv.dailyKg * (i + 1), 0) / totalWeight;
 
-      // التوقع القادم بناءً على آخر شراء
+      // ===== آخر نقطة مرجعية: التحديث اليدوي أو آخر شراء =====
       const lastPurchase = purchases[purchases.length - 1];
-      const lastQty = lastPurchase.qty;
-      const daysFromLastPurchase = Math.floor((new Date() - new Date(lastPurchase.date)) / 86400000);
-      const estimatedDaysTotal = lastQty / weightedAvgBags;
-      const daysUntilNext = Math.max(0, Math.round(estimatedDaysTotal - daysFromLastPurchase));
-      const nextDate = new Date(lastPurchase.date);
-      nextDate.setDate(nextDate.getDate() + Math.round(estimatedDaysTotal));
-      const nextPurchaseEstimate = nextDate.toISOString().split('T')[0];
+      const lastPurchaseDate = lastPurchase.date;
+      const lastPurchaseQty = parseFloat(lastPurchase.qty) || 0;
+      const remainingFromLastPurchase = parseFloat(lastPurchase.remainingFromPrev) || 0;
+
+      // ابحث عن آخر تحديث يدوي لهذا العلف بعد آخر شراء
+      const relevantManual = [...manualStockUpdates]
+        .filter(u => u.values && u.values[feed.id] !== undefined && u.values[feed.id] !== '' && u.date >= lastPurchaseDate)
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      const latestManual = relevantManual[0];
+
+      let anchorDate, anchorQty, anchorType;
+      if (latestManual && latestManual.date > lastPurchaseDate) {
+        // التحديث اليدوي أحدث — استخدمه كنقطة انطلاق
+        anchorDate = latestManual.date;
+        anchorQty = parseFloat(latestManual.values[feed.id]) || 0;
+        anchorType = 'manual';
+      } else {
+        // آخر شراء هو المرجع — خصم ما استُهلك منذ الشراء حتى آخر تحديث يدوي (إن وجد في نفس اليوم)
+        anchorDate = lastPurchaseDate;
+        anchorQty = lastPurchaseQty - remainingFromLastPurchase;
+        if (anchorQty <= 0) anchorQty = lastPurchaseQty;
+        anchorType = 'purchase';
+      }
+
+      const daysFromAnchor = Math.floor((new Date() - new Date(anchorDate)) / 86400000);
+      const estimatedConsumedSinceAnchor = weightedAvgBags * daysFromAnchor;
+      const currentStock = Math.max(0, anchorQty - estimatedConsumedSinceAnchor);
+      const daysUntilNext = weightedAvgBags > 0 ? Math.max(0, Math.round(currentStock / weightedAvgBags)) : null;
+
+      const nextDate = new Date();
+      if (daysUntilNext !== null) nextDate.setDate(nextDate.getDate() + daysUntilNext);
+      const nextPurchaseEstimate = daysUntilNext !== null ? nextDate.toISOString().split('T')[0] : null;
 
       // مستوى الثقة
       const confidence = intervals.length >= 4 ? 'high' : intervals.length >= 2 ? 'medium' : 'low';
 
-      // التكاليف بناءً على آخر سعر
+      // التكاليف
       const lastPrice = lastPricePerFeed[feed.id];
       const pricePerBag = lastPrice ? lastPrice.price : 0;
       const weeklyCost = pricePerBag > 0 ? weightedAvgBags * 7 * pricePerBag : null;
@@ -1225,7 +1258,7 @@ const App = () => {
       const yearlyCost = pricePerBag > 0 ? weightedAvgBags * 365 * pricePerBag : null;
 
       // تنبيه إذا باقي أقل من 7 أيام
-      const needsAlert = daysUntilNext <= 7;
+      const needsAlert = daysUntilNext !== null && daysUntilNext <= 7;
 
       return {
         ...feed,
@@ -1233,21 +1266,25 @@ const App = () => {
         intervals,
         avgDailyBags: weightedAvgBags,
         avgDailyKg: weightedAvgKg,
-        lastPurchaseDate: lastPurchase.date,
-        lastPurchaseQty: lastQty,
-        daysFromLastPurchase,
-        estimatedDaysTotal,
-        nextPurchaseEstimate,
+        lastPurchaseDate,
+        lastPurchaseQty,
+        currentStock: Math.round(currentStock * 10) / 10,
+        anchorDate,
+        anchorQty,
+        anchorType,
+        daysFromAnchor,
         daysUntilNext,
+        nextPurchaseEstimate,
         confidence,
         needsAlert,
         weeklyCost,
         monthlyCost,
         yearlyCost,
         lastPricePerBag: pricePerBag,
+        latestManual,
       };
     });
-  }, [feeds, feedPurchases, lastPricePerFeed]);
+  }, [feeds, feedPurchases, lastPricePerFeed, manualStockUpdates]);
 
   const handleSaveFeed = () => {
     if (!feedForm.name) { alert('أدخل اسم العلف'); return; }
@@ -1728,6 +1765,33 @@ const App = () => {
     if (!user) return;
     onValue(ref(database, `users/${user.id}/workerFoodRecords`), (snap) => { if (snap.exists()) setFoodRecords(snap.val()); }, { onlyOnce: true });
   }, [user]);
+
+  const saveManualStockUpdates = useCallback((updated) => {
+    setManualStockUpdates(updated);
+    localStorage.setItem('manualStockUpdates', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/manualStockUpdates`), updated).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/manualStockUpdates`), (snap) => { if (snap.exists()) setManualStockUpdates(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  const handleSaveManualUpdate = () => {
+    if (!manualUpdateDate) { alert('أدخل التاريخ'); return; }
+    const hasAny = Object.values(manualUpdateValues).some(v => v !== '' && v !== undefined);
+    if (!hasAny) { alert('أدخل كمية لعلف واحد على الأقل'); return; }
+    // احذف أي تحديث يدوي بنفس التاريخ واستبدله
+    const existing = manualStockUpdates.filter(u => u.date !== manualUpdateDate);
+    const newUpdate = {
+      id: `msu_${Date.now()}`,
+      date: manualUpdateDate,
+      values: { ...manualUpdateValues }, // { feedId: qty }
+    };
+    saveManualStockUpdates([...existing, newUpdate]);
+    setManualUpdateValues({});
+    setShowManualUpdate(false);
+  };
 
   const handleSaveFood = () => {
     if (!foodForm.date || !foodForm.totalCost) { alert('أدخل التاريخ والتكلفة'); return; }
@@ -4907,6 +4971,17 @@ const App = () => {
                           </div>
                         ) : (
                           <>
+                            {/* نقطة الارتكاز */}
+                            <div style={{ background: feed.anchorType === 'manual' ? '#f0f4ff' : '#fef9e7', borderRadius: '8px', padding: '8px 12px', marginBottom: '10px', border: `1px solid ${feed.anchorType === 'manual' ? '#c5cae9' : '#f0e68c'}`, fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
+                              <span style={{ color: '#555' }}>
+                                {feed.anchorType === 'manual' ? '📍 نقطة بداية: تحديث يدوي' : '🛒 نقطة بداية: آخر شراء'}
+                                <span style={{ color: '#888', marginRight: '6px', fontSize: '11px' }}>{new Date(feed.anchorDate).toLocaleDateString('en-GB')}</span>
+                              </span>
+                              <span style={{ fontWeight: 'bold', color: feed.anchorType === 'manual' ? '#2471a3' : '#b7950b' }}>
+                                {feed.anchorQty?.toFixed(1)} {feed.unit} → المخزون الحالي المقدّر: <strong style={{ color: feed.currentStock <= 3 ? '#e74c3c' : '#27ae60' }}>{feed.currentStock} {feed.unit}</strong>
+                              </span>
+                            </div>
+
                             {/* إحصائيات */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '7px', marginBottom: '10px' }}>
                               <div style={{ background: '#faf3e8', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
@@ -5000,72 +5075,106 @@ const App = () => {
               {/* ===== تبويب تحديث المخزون ===== */}
               {feedTab === 'stockupdate' && (
                 <div>
-                  <div style={{ background: '#fef9e7', borderRadius: '10px', padding: '12px 15px', marginBottom: '15px', border: '1px solid #f0e68c', fontSize: '12px', color: '#856404' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '5px', fontSize: '13px' }}>📋 لماذا هذا التبويب؟</div>
-                    <div style={{ lineHeight: '1.8', color: '#555' }}>
-                      عند شراء علف جديد قبل نفاد القديم — سجّل هنا المتبقي من كل نوع بتاريخ الشراء الجديد.<br/>
-                      هذا يُحسّن دقة الحساب الذكي لأن الاستهلاك الفعلي = الكمية المشتراة − المتبقي عند الشراء التالي.
+                  {/* قسم 1: تحديث يدوي بتاريخ زيارة */}
+                  <div style={{ background: '#f0f4ff', borderRadius: '10px', padding: '14px', marginBottom: '15px', border: '1px solid #c5cae9' }}>
+                    <div style={{ fontWeight: 'bold', color: '#2471a3', fontSize: '13px', marginBottom: '8px' }}>📍 تحديث المخزون عند الزيارة</div>
+                    <div style={{ fontSize: '12px', color: '#555', marginBottom: '10px', lineHeight: 1.7 }}>
+                      زرت المزرعة وعددت الأكياس؟ سجّل هنا الكمية الفعلية لكل علف — الحساب الذكي سيستخدمه كنقطة بداية أدق.
                     </div>
-                  </div>
 
-                  {/* أحدث شراء لكل علف */}
-                  {feeds.map(feed => {
-                    const purchases = [...feedPurchases.filter(p => p.feedId === feed.id)]
-                      .sort((a, b) => new Date(b.date) - new Date(a.date));
-                    const lastPurchase = purchases[0];
-                    if (!lastPurchase) return null;
-
-                    const hasRemaining = lastPurchase.remainingFromPrev !== undefined && lastPurchase.remainingFromPrev !== '';
-                    return (
-                      <div key={feed.id} style={{ background: 'white', border: `1.5px solid ${hasRemaining ? '#27ae60' : '#f0e68c'}`, borderRadius: '10px', padding: '13px 15px', marginBottom: '10px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-                          <div>
-                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a3010' }}>🌾 {feed.name}</div>
-                            <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
-                              آخر شراء: {new Date(lastPurchase.date).toLocaleDateString('en-GB')} — {lastPurchase.qty} {feed.unit}
-                            </div>
-                          </div>
-                          {hasRemaining
-                            ? <span style={{ background: '#d5f5e3', color: '#27ae60', fontSize: '11px', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>✅ محدّث</span>
-                            : <span style={{ background: '#fef9e7', color: '#b7950b', fontSize: '11px', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>⏳ يحتاج تحديث</span>
-                          }
+                    {showManualUpdate ? (
+                      <div style={{ background: 'white', borderRadius: '8px', padding: '12px', border: '1px solid #c5cae9' }}>
+                        <div style={{ marginBottom: '10px' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px', color: '#2471a3' }}>📅 تاريخ الزيارة</label>
+                          <input type="date" value={manualUpdateDate} onChange={e => setManualUpdateDate(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
                         </div>
-
-                        <div style={{ background: '#fef9e7', borderRadius: '8px', padding: '10px 12px', border: '1px solid #f0e68c' }}>
-                          <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#b7950b', display: 'block', marginBottom: '6px' }}>
-                            📦 المتبقي من الشراء السابق عند تاريخ {new Date(lastPurchase.date).toLocaleDateString('en-GB')} ({feed.unit}):
-                          </label>
-                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <input
-                              type="number" min="0" step="0.5"
-                              defaultValue={hasRemaining ? lastPurchase.remainingFromPrev : ''}
-                              placeholder="0 = لا شيء، 0.5 = نصف وحدة..."
-                              style={{ padding: '8px', border: '1px solid #f0e68c', borderRadius: '6px', flex: 1, fontSize: '13px' }}
-                              id={`remaining-${feed.id}`}
-                            />
-                            <button onClick={() => {
-                              const val = document.getElementById(`remaining-${feed.id}`)?.value;
-                              if (val === '' || val === undefined) { alert('أدخل القيمة — يقبل 0'); return; }
-                              const updated = feedPurchases.map(p =>
-                                p.id === lastPurchase.id ? { ...p, remainingFromPrev: parseFloat(val) } : p
-                              );
-                              saveFeedPurchases(updated);
-                            }} style={{ background: '#b7950b', color: 'white', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap' }}>
-                              ✓ حفظ
-                            </button>
-                          </div>
-                          {hasRemaining && (
-                            <div style={{ fontSize: '11px', color: '#27ae60', marginTop: '4px', fontWeight: 'bold' }}>
-                              ✅ مسجّل: {lastPurchase.remainingFromPrev} {feed.unit} متبقي
+                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', marginBottom: '8px' }}>أدخل الكمية الموجودة فعلياً (الأكياس/الوحدات):</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', marginBottom: '12px' }}>
+                          {feeds.map(feed => (
+                            <div key={feed.id} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <span style={{ flex: 1, fontSize: '13px', color: '#333', fontWeight: 'bold' }}>🌾 {feed.name}</span>
+                              <input
+                                type="number" min="0" step="0.5"
+                                placeholder={`${feed.unit}`}
+                                value={manualUpdateValues[feed.id] ?? ''}
+                                onChange={e => setManualUpdateValues(p => ({ ...p, [feed.id]: e.target.value }))}
+                                style={{ width: '90px', padding: '7px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }}
+                              />
+                              <span style={{ fontSize: '11px', color: '#888', width: '40px' }}>{feed.unit}</span>
                             </div>
-                          )}
+                          ))}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          <button onClick={handleSaveManualUpdate} style={{ background: '#2471a3', color: 'white', border: 'none', padding: '9px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>✓ حفظ التحديث</button>
+                          <button onClick={() => { setShowManualUpdate(false); setManualUpdateValues({}); }} style={{ background: '#ddd', border: 'none', padding: '9px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                         </div>
                       </div>
-                    );
-                  })}
+                    ) : (
+                      <button onClick={() => { setShowManualUpdate(true); setManualUpdateDate(new Date().toISOString().split('T')[0]); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '7px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
+                        📍 تسجيل مخزون الزيارة الحالية
+                      </button>
+                    )}
 
-                  {feeds.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>أضف أنواع علف أولاً</div>}
-                  {feeds.length > 0 && feedPurchases.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>سجّل مشتريات أولاً لتظهر هنا</div>}
+                    {/* سجل التحديثات اليدوية */}
+                    {manualStockUpdates.length > 0 && (
+                      <div style={{ marginTop: '12px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', marginBottom: '6px' }}>📋 آخر التحديثات اليدوية:</div>
+                        {[...manualStockUpdates].sort((a,b) => new Date(b.date)-new Date(a.date)).slice(0,5).map(upd => (
+                          <div key={upd.id} style={{ background: 'white', borderRadius: '7px', padding: '7px 10px', marginBottom: '5px', border: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
+                            <div>
+                              <span style={{ fontWeight: 'bold', fontSize: '12px', color: '#2471a3' }}>📅 {new Date(upd.date).toLocaleDateString('en-GB')}</span>
+                              <span style={{ fontSize: '11px', color: '#888', marginRight: '8px' }}>
+                                {Object.entries(upd.values || {}).filter(([,v]) => v !== '').map(([fid, qty]) => {
+                                  const f = feeds.find(x => x.id === fid);
+                                  return f ? `${f.name}: ${qty} ${f.unit}` : '';
+                                }).filter(Boolean).join(' · ')}
+                              </span>
+                            </div>
+                            <button onClick={() => { if (window.confirm('حذف هذا التحديث؟')) saveManualStockUpdates(manualStockUpdates.filter(u => u.id !== upd.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '4px', padding: '2px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* قسم 2: ربط المتبقي بالمشتريات */}
+                  <div style={{ background: '#fef9e7', borderRadius: '10px', padding: '13px 15px', border: '1px solid #f0e68c' }}>
+                    <div style={{ fontWeight: 'bold', color: '#b7950b', fontSize: '13px', marginBottom: '8px' }}>🛒 متبقي الشراء السابق عند شراء جديد</div>
+                    <div style={{ fontSize: '12px', color: '#555', marginBottom: '10px', lineHeight: 1.7 }}>
+                      اشتريت قبل النفاد؟ سجّل كم كان متبقياً من الشراء السابق يوم الشراء الجديد.
+                    </div>
+                    {feeds.map(feed => {
+                      const purchases = [...feedPurchases.filter(p => p.feedId === feed.id)].sort((a,b) => new Date(b.date)-new Date(a.date));
+                      const lastPurchase = purchases[0];
+                      if (!lastPurchase) return null;
+                      const hasRemaining = lastPurchase.remainingFromPrev !== undefined && lastPurchase.remainingFromPrev !== '';
+                      return (
+                        <div key={feed.id} style={{ background: 'white', border: `1.5px solid ${hasRemaining ? '#27ae60' : '#f0e68c'}`, borderRadius: '8px', padding: '10px 12px', marginBottom: '8px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '5px', marginBottom: '7px' }}>
+                            <div>
+                              <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010' }}>🌾 {feed.name}</span>
+                              <span style={{ fontSize: '11px', color: '#888', marginRight: '8px' }}>آخر شراء: {new Date(lastPurchase.date).toLocaleDateString('en-GB')} — {lastPurchase.qty} {feed.unit}</span>
+                            </div>
+                            {hasRemaining
+                              ? <span style={{ background: '#d5f5e3', color: '#27ae60', fontSize: '11px', padding: '2px 7px', borderRadius: '5px', fontWeight: 'bold' }}>✅ {lastPurchase.remainingFromPrev} {feed.unit}</span>
+                              : <span style={{ background: '#fef9e7', color: '#b7950b', fontSize: '11px', padding: '2px 7px', borderRadius: '5px' }}>⏳ لم يُحدَّث</span>
+                            }
+                          </div>
+                          <div style={{ display: 'flex', gap: '7px' }}>
+                            <input type="number" min="0" step="0.5" defaultValue={hasRemaining ? lastPurchase.remainingFromPrev : ''} placeholder="0 أو اكتب الكمية المتبقية..." style={{ padding: '7px', border: '1px solid #f0e68c', borderRadius: '5px', flex: 1, fontSize: '13px' }} id={`remaining-${feed.id}`} />
+                            <button onClick={() => {
+                              const val = document.getElementById(`remaining-${feed.id}`)?.value;
+                              if (val === '' || val === undefined) { alert('أدخل القيمة'); return; }
+                              const updated = feedPurchases.map(p => p.id === lastPurchase.id ? { ...p, remainingFromPrev: parseFloat(val) } : p);
+                              saveFeedPurchases(updated);
+                            }} style={{ background: '#b7950b', color: 'white', border: 'none', padding: '7px 12px', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px', whiteSpace: 'nowrap' }}>✓ حفظ</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {feeds.length === 0 && <div style={{ textAlign: 'center', padding: '20px', color: '#bbb', fontSize: '12px' }}>أضف أنواع علف أولاً</div>}
+                    {feeds.length > 0 && feedPurchases.length === 0 && <div style={{ textAlign: 'center', padding: '20px', color: '#bbb', fontSize: '12px' }}>سجّل مشتريات أولاً لتظهر هنا</div>}
+                  </div>
                 </div>
               )}
             </div>
