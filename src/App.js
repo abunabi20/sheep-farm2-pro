@@ -344,6 +344,7 @@ const App = () => {
     return s ? JSON.parse(s) : [];
   });
   const [showManualUpdate, setShowManualUpdate] = useState(false);
+  const [editManualUpdateId, setEditManualUpdateId] = useState(null);
   const [manualUpdateDate, setManualUpdateDate] = useState(new Date().toISOString().split('T')[0]);
   const [manualUpdateValues, setManualUpdateValues] = useState({});
   const [foodRecords, setFoodRecords] = useState(() => { const s = localStorage.getItem('workerFoodRecords'); return s ? JSON.parse(s) : []; });
@@ -1781,15 +1782,21 @@ const App = () => {
     if (!manualUpdateDate) { alert('أدخل التاريخ'); return; }
     const hasAny = Object.values(manualUpdateValues).some(v => v !== '' && v !== undefined);
     if (!hasAny) { alert('أدخل كمية لعلف واحد على الأقل'); return; }
-    // احذف أي تحديث يدوي بنفس التاريخ واستبدله
-    const existing = manualStockUpdates.filter(u => u.date !== manualUpdateDate);
-    const newUpdate = {
-      id: `msu_${Date.now()}`,
-      date: manualUpdateDate,
-      values: { ...manualUpdateValues }, // { feedId: qty }
-    };
-    saveManualStockUpdates([...existing, newUpdate]);
+    let updated;
+    if (editManualUpdateId) {
+      // تعديل سجل موجود
+      updated = manualStockUpdates.map(u => u.id === editManualUpdateId
+        ? { ...u, date: manualUpdateDate, values: { ...manualUpdateValues } }
+        : u
+      );
+    } else {
+      // إضافة جديدة — احذف أي تحديث بنفس التاريخ واستبدله
+      const existing = manualStockUpdates.filter(u => u.date !== manualUpdateDate);
+      updated = [...existing, { id: `msu_${Date.now()}`, date: manualUpdateDate, values: { ...manualUpdateValues } }];
+    }
+    saveManualStockUpdates(updated);
     setManualUpdateValues({});
+    setEditManualUpdateId(null);
     setShowManualUpdate(false);
   };
 
@@ -5084,6 +5091,9 @@ const App = () => {
 
                     {showManualUpdate ? (
                       <div style={{ background: 'white', borderRadius: '8px', padding: '12px', border: '1px solid #c5cae9' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#2471a3', marginBottom: '10px' }}>
+                          {editManualUpdateId ? '✏️ تعديل التحديث' : '📍 تسجيل مخزون جديد'}
+                        </div>
                         <div style={{ marginBottom: '10px' }}>
                           <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px', color: '#2471a3' }}>📅 تاريخ الزيارة</label>
                           <input type="date" value={manualUpdateDate} onChange={e => setManualUpdateDate(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
@@ -5105,12 +5115,12 @@ const App = () => {
                           ))}
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                          <button onClick={handleSaveManualUpdate} style={{ background: '#2471a3', color: 'white', border: 'none', padding: '9px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>✓ حفظ التحديث</button>
-                          <button onClick={() => { setShowManualUpdate(false); setManualUpdateValues({}); }} style={{ background: '#ddd', border: 'none', padding: '9px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                          <button onClick={handleSaveManualUpdate} style={{ background: '#2471a3', color: 'white', border: 'none', padding: '9px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>✓ حفظ</button>
+                          <button onClick={() => { setShowManualUpdate(false); setManualUpdateValues({}); setEditManualUpdateId(null); }} style={{ background: '#ddd', border: 'none', padding: '9px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                         </div>
                       </div>
                     ) : (
-                      <button onClick={() => { setShowManualUpdate(true); setManualUpdateDate(new Date().toISOString().split('T')[0]); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '7px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
+                      <button onClick={() => { setShowManualUpdate(true); setManualUpdateDate(new Date().toISOString().split('T')[0]); setEditManualUpdateId(null); setManualUpdateValues({}); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '7px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
                         📍 تسجيل مخزون الزيارة الحالية
                       </button>
                     )}
@@ -5121,7 +5131,7 @@ const App = () => {
                         <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', marginBottom: '6px' }}>📋 آخر التحديثات اليدوية:</div>
                         {[...manualStockUpdates].sort((a,b) => new Date(b.date)-new Date(a.date)).slice(0,5).map(upd => (
                           <div key={upd.id} style={{ background: 'white', borderRadius: '7px', padding: '7px 10px', marginBottom: '5px', border: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
-                            <div>
+                            <div style={{ flex: 1 }}>
                               <span style={{ fontWeight: 'bold', fontSize: '12px', color: '#2471a3' }}>📅 {new Date(upd.date).toLocaleDateString('en-GB')}</span>
                               <span style={{ fontSize: '11px', color: '#888', marginRight: '8px' }}>
                                 {Object.entries(upd.values || {}).filter(([,v]) => v !== '').map(([fid, qty]) => {
@@ -5130,7 +5140,15 @@ const App = () => {
                                 }).filter(Boolean).join(' · ')}
                               </span>
                             </div>
-                            <button onClick={() => { if (window.confirm('حذف هذا التحديث؟')) saveManualStockUpdates(manualStockUpdates.filter(u => u.id !== upd.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '4px', padding: '2px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                              <button onClick={() => {
+                                setManualUpdateDate(upd.date);
+                                setManualUpdateValues({ ...upd.values });
+                                setEditManualUpdateId(upd.id);
+                                setShowManualUpdate(true);
+                              }} style={{ background: '#f0f4ff', border: '1px solid #2471a3', color: '#2471a3', borderRadius: '4px', padding: '2px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                              <button onClick={() => { if (window.confirm('حذف هذا التحديث؟')) saveManualStockUpdates(manualStockUpdates.filter(u => u.id !== upd.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '4px', padding: '2px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                            </div>
                           </div>
                         ))}
                       </div>
