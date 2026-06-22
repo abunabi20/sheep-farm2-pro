@@ -2631,9 +2631,11 @@ const App = () => {
               <span style={{ fontSize: '13px', color: '#c0392b', fontWeight: 'bold' }}>📊 إجمالي الإناث: {productionReportData.length}</span>
             </div>
 
-            {/* القائمة — تبويب السجلات */}
+            {/* القائمة — التبويبات */}
+            <div style={{ maxHeight: '520px', overflowY: 'auto' }}>
+            {/* تبويب السجلات */}
             {productionTab === 'records' && (
-            <div style={{ padding: '15px 20px', maxHeight: '520px', overflowY: 'auto' }}>
+            <div style={{ padding: '15px 20px' }}>
               {productionReportData.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '50px', color: '#999' }}>
                   <div style={{ fontSize: '40px', marginBottom: '10px' }}>🐑</div>
@@ -2720,11 +2722,12 @@ const App = () => {
                 </div>
               ))}
             </div>
+            </div>
             )}
 
             {/* تبويب إحصائية الإنتاج */}
             {productionTab === 'stats' && (
-            <div style={{ padding: '15px 20px', maxHeight: '520px', overflowY: 'auto' }}>
+            <div style={{ padding: '15px 20px' }}>
               {(() => {
                 const typesToSearch = productionReportType === 'all' ? Object.keys(animals) : [productionReportType];
                 const rows = [];
@@ -2789,6 +2792,7 @@ const App = () => {
               })()}
             </div>
             )}
+            </div>{/* end maxHeight wrapper */}
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
