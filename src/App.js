@@ -3651,7 +3651,7 @@ const App = () => {
                 </div>
               )}
 
-                            {workersTab === 'summary' && (
+              {workersTab === 'summary' && (
                 <div>
                   {/* البطاقة الرئيسية */}
                   <div style={{ background: 'linear-gradient(135deg, #784212, #5d3310)', borderRadius: '12px', padding: '18px', marginBottom: '15px', color: 'white' }}>
@@ -6721,7 +6721,9 @@ const App = () => {
             </div>
 
             {/* النتائج */}
-            <div style={{ padding: '15px 25px', maxHeight: '400px', overflowY: 'auto' }}>
+            <div style={{ maxHeight: '450px', overflowY: 'auto' }}>
+            {ageReportTab === 'list' && (
+            <div style={{ padding: '15px 25px' }}>
               {ageReportAnimals.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
                   <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔍</div>
@@ -6758,6 +6760,8 @@ const App = () => {
                   ))}
                 </div>
               )}
+            </div>
+            )}
 
               {/* ===== تبويب آخر ولادة ===== */}
               {ageReportTab === 'lastbirth' && (
@@ -6814,7 +6818,7 @@ const App = () => {
                   })()}
                 </div>
               )}
-            </div>
+            </div>{/* end wrapper */}
 
             {/* Footer */}
             <div style={{ padding: '15px 25px', borderTop: '1px solid #eee' }}>
