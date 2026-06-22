@@ -95,6 +95,7 @@ const App = () => {
   const [loginError, setLoginError] = useState('');
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showAgeReport, setShowAgeReport] = useState(false);
+  const [ageReportTab, setAgeReportTab] = useState('list'); // list | lastbirth
   const [ageReportFilter, setAgeReportFilter] = useState({ type: 'all', minYears: 5, minMonths: 0 });
   const [showNumbersReport, setShowNumbersReport] = useState(false);
   const [numbersReportType, setNumbersReportType] = useState('all');
@@ -103,6 +104,7 @@ const App = () => {
   const [birthAnimal, setBirthAnimal] = useState(null);
   const [birthForm, setBirthForm] = useState({ date: new Date().toISOString().split('T')[0], count: 1, gender: 'mixed', notes: '' });
   const [showProductionReport, setShowProductionReport] = useState(false);
+  const [productionTab, setProductionTab] = useState('records'); // records | stats
   const [productionReportType, setProductionReportType] = useState('all');
   const [showSalesReport, setShowSalesReport] = useState(false);
   const [salesReportTab, setSalesReportTab] = useState('sales');
@@ -166,14 +168,19 @@ const App = () => {
     sparkHistory: [],
   });
   const [showAddOilChange, setShowAddOilChange] = useState(false);
+  const [editOilId, setEditOilId] = useState(null);
+  const [editOilPumpId, setEditOilPumpId] = useState(null);
   const [oilChangeForm, setOilChangeForm] = useState({ date: new Date().toISOString().split('T')[0], boxes: 1, cost: '', notes: '' });
   const [showAddSpark, setShowAddSpark] = useState(false);
+  const [editSparkId, setEditSparkId] = useState(null);
+  const [editSparkPumpId, setEditSparkPumpId] = useState(null);
   const [sparkForm, setSparkForm] = useState({ date: new Date().toISOString().split('T')[0], brand: '', cost: '', notes: '' });
   const [pumpBrands, setPumpBrands] = useState(() => {
     const s = localStorage.getItem('pumpBrands');
     return s ? JSON.parse(s) : [];
   });
   const [showAddBrand, setShowAddBrand] = useState(false);
+  const [editBrandId, setEditBrandId] = useState(null);
   const [brandForm, setBrandForm] = useState({ name: '', rating: 'good', review: '', price: '' });
 
   // ===== تتبع البنزين =====
@@ -182,6 +189,7 @@ const App = () => {
     return s ? JSON.parse(s) : [];
   });
   const [showAddPetrol, setShowAddPetrol] = useState(false);
+  const [editPetrolId, setEditPetrolId] = useState(null);
   const [petrolForm, setPetrolForm] = useState({
     pumpId: '', date: new Date().toISOString().split('T')[0],
     price: '', notes: ''
@@ -191,13 +199,16 @@ const App = () => {
   const EMPTY_MAINT = { date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '' };
   const [pumpMaintenance, setPumpMaintenance] = useState(() => { const s = localStorage.getItem('pumpMaintenance'); return s ? JSON.parse(s) : []; });
   const [showAddPumpMaint, setShowAddPumpMaint] = useState(false);
+  const [editPumpMaintId, setEditPumpMaintId] = useState(null);
   const [pumpMaintPumpId, setPumpMaintPumpId] = useState(null);
   const [pumpMaintForm, setPumpMaintForm] = useState(EMPTY_MAINT);
   const [solarMaintenance, setSolarMaintenance] = useState(() => { const s = localStorage.getItem('solarMaintenance'); return s ? JSON.parse(s) : []; });
   const [showAddSolarMaint, setShowAddSolarMaint] = useState(false);
+  const [editSolarMaintId, setEditSolarMaintId] = useState(null);
   const [solarMaintForm, setSolarMaintForm] = useState({ ...EMPTY_MAINT, system: 'battery' });
   const [farmMaintenance, setFarmMaintenance] = useState(() => { const s = localStorage.getItem('farmMaintenance'); return s ? JSON.parse(s) : []; });
   const [showAddFarmMaint, setShowAddFarmMaint] = useState(false);
+  const [editFarmMaintId, setEditFarmMaintId] = useState(null);
   const [farmMaintForm, setFarmMaintForm] = useState({ ...EMPTY_MAINT, area: '' });
   const [showFarmMaintSystem, setShowFarmMaintSystem] = useState(false);
   const [showAlertsCenter, setShowAlertsCenter] = useState(false);
@@ -307,6 +318,7 @@ const App = () => {
   const [gasLocations, setGasLocations] = useState(() => { const s = localStorage.getItem('gasLocations'); return s ? JSON.parse(s) : []; });
   const [newGasLocationInput, setNewGasLocationInput] = useState('');
   const [showAddRefill, setShowAddRefill] = useState(false);
+  const [editRefillId, setEditRefillId] = useState(null);
   const [refillCylinderId, setRefillCylinderId] = useState(null);
   const [refillForm, setRefillForm] = useState({
     date: new Date().toISOString().split('T')[0], price: '', notes: ''
@@ -323,7 +335,8 @@ const App = () => {
   const [editWorkerId, setEditWorkerId] = useState(null);
   const [workerForm, setWorkerForm] = useState({
     name: '', description: '', nationality: '', salary: '',
-    startDate: '', status: 'active', // active | travel | sick | vacation | terminated
+    startDate: '', status: 'active',
+    statusDate: '', // تاريخ بدء الحالة الحالية (سفر/إجازة)
     notes: ''
   });
   const [showAddWorkerCost, setShowAddWorkerCost] = useState(false);
@@ -930,8 +943,12 @@ const App = () => {
 
   const handleSavePetrol = () => {
     if (!petrolForm.pumpId || !petrolForm.date) { alert('اختر الماطور وأدخل التاريخ'); return; }
-    const newRecord = { id: `pet_${Date.now()}`, ...petrolForm, price: parseFloat(petrolForm.price) || 0 };
-    savePetrolRecords([...petrolRecords, newRecord]);
+    if (editPetrolId) {
+      savePetrolRecords(petrolRecords.map(r => r.id === editPetrolId ? { ...r, ...petrolForm, price: parseFloat(petrolForm.price) || 0 } : r));
+      setEditPetrolId(null);
+    } else {
+      savePetrolRecords([...petrolRecords, { id: `pet_${Date.now()}`, ...petrolForm, price: parseFloat(petrolForm.price) || 0 }]);
+    }
     setPetrolForm({ pumpId: '', date: new Date().toISOString().split('T')[0], price: '', notes: '' });
     setShowAddPetrol(false);
   };
@@ -970,8 +987,12 @@ const App = () => {
 
   const handleSavePumpMaint = () => {
     if (!pumpMaintForm.title || !pumpMaintForm.date) { alert('أدخل العنوان والتاريخ'); return; }
-    const rec = { id: `pm_${Date.now()}`, pumpId: pumpMaintPumpId, ...pumpMaintForm, cost: parseFloat(pumpMaintForm.cost) || 0 };
-    savePumpMaint([...pumpMaintenance, rec]);
+    if (editPumpMaintId) {
+      savePumpMaint(pumpMaintenance.map(r => r.id === editPumpMaintId ? { ...r, ...pumpMaintForm, cost: parseFloat(pumpMaintForm.cost) || 0 } : r));
+      setEditPumpMaintId(null);
+    } else {
+      savePumpMaint([...pumpMaintenance, { id: `pm_${Date.now()}`, pumpId: pumpMaintPumpId, ...pumpMaintForm, cost: parseFloat(pumpMaintForm.cost) || 0 }]);
+    }
     setPumpMaintForm({ date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '' });
     setShowAddPumpMaint(false);
     setPumpMaintPumpId(null);
@@ -979,22 +1000,30 @@ const App = () => {
 
   const handleSaveSolarMaint = () => {
     if (!solarMaintForm.title || !solarMaintForm.date) { alert('أدخل العنوان والتاريخ'); return; }
-    const rec = { id: `sm_${Date.now()}`, ...solarMaintForm, cost: parseFloat(solarMaintForm.cost) || 0 };
-    saveSolarMaint([...solarMaintenance, rec]);
+    if (editSolarMaintId) {
+      saveSolarMaint(solarMaintenance.map(r => r.id === editSolarMaintId ? { ...r, ...solarMaintForm, cost: parseFloat(solarMaintForm.cost) || 0 } : r));
+      setEditSolarMaintId(null);
+    } else {
+      saveSolarMaint([...solarMaintenance, { id: `sm_${Date.now()}`, ...solarMaintForm, cost: parseFloat(solarMaintForm.cost) || 0 }]);
+    }
     setSolarMaintForm({ date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '', system: 'battery' });
     setShowAddSolarMaint(false);
   };
 
   const handleSaveFarmMaint = () => {
     if (!farmMaintForm.title || !farmMaintForm.date) { alert('أدخل العنوان والتاريخ'); return; }
-    const rec = { id: `fm_${Date.now()}`, ...farmMaintForm, cost: parseFloat(farmMaintForm.cost) || 0 };
-    saveFarmMaint([...farmMaintenance, rec]);
+    if (editFarmMaintId) {
+      saveFarmMaint(farmMaintenance.map(r => r.id === editFarmMaintId ? { ...r, ...farmMaintForm, cost: parseFloat(farmMaintForm.cost) || 0 } : r));
+      setEditFarmMaintId(null);
+    } else {
+      saveFarmMaint([...farmMaintenance, { id: `fm_${Date.now()}`, ...farmMaintForm, cost: parseFloat(farmMaintForm.cost) || 0 }]);
+    }
     setFarmMaintForm({ date: new Date().toISOString().split('T')[0], title: '', cost: '', description: '', technician: '', nextDate: '', notes: '', area: '' });
     setShowAddFarmMaint(false);
   };
 
   // مكوّن عرض سجل الصيانة (مشترك)
-  const MaintRecord = ({ rec, onDelete }) => {
+  const MaintRecord = ({ rec, onDelete, onEdit }) => {
     const d = daysUntilMaint(rec.nextDate);
     const isUrgent = d !== null && d <= 7;
     return (
@@ -1005,17 +1034,18 @@ const App = () => {
             {isUrgent && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '1px 6px', borderRadius: '4px' }}>صيانة قريبة!</span>}
           </div>
           <div style={{ fontSize: '11px', color: '#888', marginTop: '3px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            <span>📅 {new Date(rec.date).toLocaleDateString('ar-SA')}</span>
+            <span>📅 {new Date(rec.date).toLocaleDateString('en-GB')}</span>
             {rec.technician && <span>👨‍🔧 {rec.technician}</span>}
             {rec.area && <span>📍 {rec.area}</span>}
             {rec.system && <span>⚙️ {rec.system === 'battery' ? 'بطارية' : rec.system === 'inverter' ? 'إنفرتر' : 'ألواح'}</span>}
-            {rec.nextDate && <span style={{ color: isUrgent ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>🔄 القادمة: {new Date(rec.nextDate).toLocaleDateString('ar-SA')}{d !== null ? ` (${d === 0 ? 'اليوم!' : `${d} يوم`})` : ''}</span>}
+            {rec.nextDate && <span style={{ color: isUrgent ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>🔄 القادمة: {new Date(rec.nextDate).toLocaleDateString('en-GB')}{d !== null ? ` (${d === 0 ? 'اليوم!' : `${d} يوم`})` : ''}</span>}
           </div>
           {rec.description && <div style={{ fontSize: '11px', color: '#666', marginTop: '3px', background: '#f9f9f9', padding: '4px 8px', borderRadius: '5px' }}>{rec.description}</div>}
           {rec.notes && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>📝 {rec.notes}</div>}
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           {rec.cost > 0 && <span style={{ fontWeight: 'bold', color: '#e74c3c', fontSize: '13px' }}>{rec.cost.toLocaleString()} ر</span>}
+          {onEdit && <button onClick={onEdit} style={{ background: '#f5f6fa', border: '1px solid #555', color: '#555', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>}
           <button onClick={onDelete} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
         </div>
       </div>
@@ -1068,24 +1098,36 @@ const App = () => {
 
   const handleSaveOilChange = () => {
     if (!oilChangeForm.date) { alert('أدخل التاريخ'); return; }
-    const pump = pumps.find(p => p.id === selectedPumpId);
+    const pumpId = editOilPumpId || selectedPumpId;
+    const pump = pumps.find(p => p.id === pumpId);
     if (!pump) return;
     const history = pump.oilChangeHistory || [];
-    const newRecord = { id: `oil_${Date.now()}`, ...oilChangeForm, boxes: parseFloat(oilChangeForm.boxes) || 1, cost: parseFloat(oilChangeForm.cost) || 0 };
-    const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, oilChangeHistory: [...history, newRecord] } : p);
-    savePumps(updated);
+    if (editOilId) {
+      const updated = pumps.map(p => p.id === pumpId ? { ...p, oilChangeHistory: history.map(r => r.id === editOilId ? { ...r, ...oilChangeForm, boxes: parseFloat(oilChangeForm.boxes)||1, cost: parseFloat(oilChangeForm.cost)||0 } : r) } : p);
+      savePumps(updated);
+      setEditOilId(null); setEditOilPumpId(null);
+    } else {
+      const updated = pumps.map(p => p.id === pumpId ? { ...p, oilChangeHistory: [...history, { id: `oil_${Date.now()}`, ...oilChangeForm, boxes: parseFloat(oilChangeForm.boxes)||1, cost: parseFloat(oilChangeForm.cost)||0 }] } : p);
+      savePumps(updated);
+    }
     setOilChangeForm({ date: new Date().toISOString().split('T')[0], boxes: 1, cost: '', notes: '' });
     setShowAddOilChange(false);
   };
 
   const handleSaveSpark = () => {
     if (!sparkForm.date) { alert('أدخل التاريخ'); return; }
-    const pump = pumps.find(p => p.id === selectedPumpId);
+    const pumpId = editSparkPumpId || selectedPumpId;
+    const pump = pumps.find(p => p.id === pumpId);
     if (!pump) return;
     const history = pump.sparkHistory || [];
-    const newRecord = { id: `spark_${Date.now()}`, ...sparkForm, cost: parseFloat(sparkForm.cost) || 0 };
-    const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, sparkHistory: [...history, newRecord] } : p);
-    savePumps(updated);
+    if (editSparkId) {
+      const updated = pumps.map(p => p.id === pumpId ? { ...p, sparkHistory: history.map(r => r.id === editSparkId ? { ...r, ...sparkForm, cost: parseFloat(sparkForm.cost)||0 } : r) } : p);
+      savePumps(updated);
+      setEditSparkId(null); setEditSparkPumpId(null);
+    } else {
+      const updated = pumps.map(p => p.id === pumpId ? { ...p, sparkHistory: [...history, { id: `spark_${Date.now()}`, ...sparkForm, cost: parseFloat(sparkForm.cost)||0 }] } : p);
+      savePumps(updated);
+    }
     setSparkForm({ date: new Date().toISOString().split('T')[0], brand: '', cost: '', notes: '' });
     setShowAddSpark(false);
   };
@@ -1707,9 +1749,14 @@ const App = () => {
     const cyl = gasCylinders.find(c => c.id === refillCylinderId);
     if (!cyl) return;
     const refills = cyl.refills || [];
-    const newRefill = { id: `ref_${Date.now()}`, ...refillForm, price: parseFloat(refillForm.price) || 0 };
-    const updated = gasCylinders.map(c => c.id === refillCylinderId ? { ...c, refills: [...refills, newRefill] } : c);
-    saveGasCylinders(updated);
+    if (editRefillId) {
+      const updated = gasCylinders.map(c => c.id === refillCylinderId ? { ...c, refills: refills.map(r => r.id === editRefillId ? { ...r, ...refillForm, price: parseFloat(refillForm.price)||0 } : r) } : c);
+      saveGasCylinders(updated);
+      setEditRefillId(null);
+    } else {
+      const updated = gasCylinders.map(c => c.id === refillCylinderId ? { ...c, refills: [...refills, { id: `ref_${Date.now()}`, ...refillForm, price: parseFloat(refillForm.price)||0 }] } : c);
+      saveGasCylinders(updated);
+    }
     setRefillForm({ date: new Date().toISOString().split('T')[0], price: '', notes: '' });
     setShowAddRefill(false);
     setRefillCylinderId(null);
@@ -1737,7 +1784,7 @@ const App = () => {
       updated = [...workers, { id: `w_${Date.now()}`, ...data, costs: [] }];
     }
     saveWorkers(updated);
-    setWorkerForm({ name: '', description: '', nationality: '', salary: '', startDate: '', status: 'active', notes: '' });
+    setWorkerForm({ name: '', description: '', nationality: '', salary: '', startDate: '', status: 'active', statusDate: '', notes: '' });
     setEditWorkerId(null);
     setShowAddWorker(false);
   };
@@ -1835,6 +1882,20 @@ const App = () => {
   const costTypeLabel = (type) => {
     const labels = { residence: '🪪 تجديد إقامة', ticket: '✈️ تذاكر سفر', medical: '🏥 علاج طبي', other: '📌 أخرى' };
     return labels[type] || type;
+  };
+
+  const durationText = (fromDate) => {
+    if (!fromDate) return null;
+    const totalDays = Math.floor((new Date() - new Date(fromDate)) / 86400000);
+    if (totalDays < 0) return null;
+    const years = Math.floor(totalDays / 365);
+    const months = Math.floor((totalDays % 365) / 30);
+    const days = totalDays % 30;
+    const parts = [];
+    if (years > 0) parts.push(`${years} سنة`);
+    if (months > 0) parts.push(`${months} شهر`);
+    if (days > 0 || parts.length === 0) parts.push(`${days} يوم`);
+    return parts.join(' و');
   };
 
   const statusLabel = (status) => {
@@ -2551,6 +2612,15 @@ const App = () => {
               <p style={{ margin: '5px 0 0', fontSize: '12px', opacity: 0.85 }}>الإناث مرتبة من الأعلى إنتاجاً — بناءً على عدد الولادات والمواليد وانتظام الإنتاج</p>
             </div>
 
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#fdf2f2' }}>
+              {[{ key: 'records', label: '📋 سجلات الإنتاج' }, { key: 'stats', label: '📊 إحصائية الإنتاج' }].map(tab => (
+                <button key={tab.key} onClick={() => setProductionTab(tab.key)} style={{ flex: 1, padding: '11px', background: productionTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: productionTab === tab.key ? '3px solid #c0392b' : '3px solid transparent', cursor: 'pointer', fontWeight: productionTab === tab.key ? 'bold' : 'normal', color: productionTab === tab.key ? '#c0392b' : '#888', fontSize: isMobile ? '12px' : '13px' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
             {/* فلتر النوع */}
             <div style={{ padding: '15px 20px', background: '#fdf2f2', borderBottom: '1px solid #f5c6c6', display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
               <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#555' }}>نوع الحيوان:</label>
@@ -2561,7 +2631,8 @@ const App = () => {
               <span style={{ fontSize: '13px', color: '#c0392b', fontWeight: 'bold' }}>📊 إجمالي الإناث: {productionReportData.length}</span>
             </div>
 
-            {/* القائمة */}
+            {/* القائمة — تبويب السجلات */}
+            {productionTab === 'records' && (
             <div style={{ padding: '15px 20px', maxHeight: '520px', overflowY: 'auto' }}>
               {productionReportData.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '50px', color: '#999' }}>
@@ -2587,7 +2658,7 @@ const App = () => {
                         <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
                           {animal.type === 'sheep' ? '🐑 ضان' : animal.type === 'goat' ? '🐐 ماعز' : `🐄 ${animal.type}`}
                           {' · '}عمرها: {animal.age.years > 0 ? `${animal.age.years} سنة` : ''}{animal.age.months > 0 ? ` و${animal.age.months} شهر` : ''}
-                          {' · '}دخلت المشروع: {new Date(animal.birthDate).toLocaleDateString('ar-SA')}
+                          {' · '}دخلت المشروع: {new Date(animal.birthDate).toLocaleDateString('en-GB')}
                         </div>
                       </div>
                     </div>
@@ -2622,7 +2693,7 @@ const App = () => {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         {animal.birthsList.map((b, i) => (
                           <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 8px', background: 'white', borderRadius: '5px', border: '1px solid #eee' }}>
-                            <span style={{ color: '#555' }}>#{i + 1} — {new Date(b.date).toLocaleDateString('ar-SA')}</span>
+                            <span style={{ color: '#555' }}>#{i + 1} — {new Date(b.date).toLocaleDateString('en-GB')}</span>
                             <span style={{ color: '#27ae60', fontWeight: 'bold' }}>{b.count} {b.count === 1 ? 'مولود' : 'مواليد'} {b.gender === 'male' ? '(ذكور)' : b.gender === 'female' ? '(إناث)' : '(مختلط)'}</span>
                             {b.notes && <span style={{ color: '#888', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.notes}</span>}
                           </div>
@@ -2649,6 +2720,75 @@ const App = () => {
                 </div>
               ))}
             </div>
+            )}
+
+            {/* تبويب إحصائية الإنتاج */}
+            {productionTab === 'stats' && (
+            <div style={{ padding: '15px 20px', maxHeight: '520px', overflowY: 'auto' }}>
+              {(() => {
+                const typesToSearch = productionReportType === 'all' ? Object.keys(animals) : [productionReportType];
+                const rows = [];
+                typesToSearch.forEach(type => {
+                  const typeAnimals = animals[type] || {};
+                  let produced = 0, notProduced = 0;
+                  Object.entries(typeAnimals).forEach(([, animal]) => {
+                    if (animal.gender !== 'female') return;
+                    const hasBirths = (animal.birthHistory || []).length > 0;
+                    if (hasBirths) produced++; else notProduced++;
+                  });
+                  if (produced + notProduced > 0) rows.push({ type, produced, notProduced, total: produced + notProduced });
+                });
+                const grandTotal = rows.reduce((s,r) => s + r.total, 0);
+                const grandProduced = rows.reduce((s,r) => s + r.produced, 0);
+                const grandNot = rows.reduce((s,r) => s + r.notProduced, 0);
+                return (
+                  <div>
+                    {/* ملخص إجمالي */}
+                    <div style={{ background: 'linear-gradient(135deg, #c0392b, #e74c3c)', borderRadius: '10px', padding: '15px', marginBottom: '15px', color: 'white' }}>
+                      <div style={{ fontSize: '12px', opacity: 0.9, marginBottom: '10px' }}>📊 إجمالي الإناث ({productionReportType === 'all' ? 'كل الأنواع' : productionReportType})</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '10px', textAlign: 'center' }}>
+                        <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '8px', padding: '10px' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '22px' }}>{grandTotal}</div>
+                          <div style={{ fontSize: '11px', opacity: 0.85 }}>إجمالي الإناث</div>
+                        </div>
+                        <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '8px', padding: '10px' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '22px' }}>{grandProduced}</div>
+                          <div style={{ fontSize: '11px', opacity: 0.85 }}>أنتجت ✅</div>
+                        </div>
+                        <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '8px', padding: '10px' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '22px' }}>{grandNot}</div>
+                          <div style={{ fontSize: '11px', opacity: 0.85 }}>لم تنتج بعد</div>
+                        </div>
+                      </div>
+                    </div>
+                    {/* تفصيل حسب النوع */}
+                    {rows.map(r => {
+                      const pct = Math.round((r.produced / r.total) * 100);
+                      return (
+                        <div key={r.type} style={{ background: 'white', border: '1px solid #eee', borderRadius: '10px', padding: '13px 15px', marginBottom: '10px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#c0392b' }}>{r.type === 'sheep' ? '🐑 ضان' : r.type === 'goat' ? '🐐 ماعز' : `🐄 ${r.type}`}</div>
+                            <div style={{ display: 'flex', gap: '10px', fontSize: '13px' }}>
+                              <span style={{ color: '#27ae60', fontWeight: 'bold' }}>✅ {r.produced} أنتجت</span>
+                              <span style={{ color: '#e74c3c', fontWeight: 'bold' }}>❌ {r.notProduced} لم تنتج</span>
+                            </div>
+                          </div>
+                          <div style={{ height: '10px', background: '#eee', borderRadius: '5px', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${pct}%`, background: '#27ae60', borderRadius: '5px' }} />
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontSize: '11px', color: '#888' }}>
+                            <span>نسبة الإنتاج: {pct}%</span>
+                            <span>الإجمالي: {r.total} أنثى</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {rows.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>لا توجد إناث مسجلة</div>}
+                  </div>
+                );
+              })()}
+            </div>
+            )}
 
             <div style={{ padding: '15px 20px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowProductionReport(false)} style={{ width: '100%', background: '#c0392b', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
@@ -2752,9 +2892,9 @@ const App = () => {
                               </div>
                             )}
                             <div style={{ fontSize: '11px', color: '#aaa', marginTop: '4px', display: 'flex', justifyContent: 'space-between' }}>
-                              <span>بدأ: {new Date(stud.cycleStartDate).toLocaleDateString('ar-SA')}</span>
+                              <span>بدأ: {new Date(stud.cycleStartDate).toLocaleDateString('en-GB')}</span>
                               {pct !== null && <span style={{ color: barColor }}>{pct}% متبقي</span>}
-                              <span>ينتهي: {new Date(new Date(stud.cycleStartDate).getTime() + (isIsolated ? stud.isolationDays : stud.freeDays) * 86400000).toLocaleDateString('ar-SA')}</span>
+                              <span>ينتهي: {new Date(new Date(stud.cycleStartDate).getTime() + (isIsolated ? stud.isolationDays : stud.freeDays) * 86400000).toLocaleDateString('en-GB')}</span>
                             </div>
                           </div>
                         )}
@@ -2772,7 +2912,7 @@ const App = () => {
                           <div style={{ background: '#fdf8f5', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', border: '1px solid #e8d5b0' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
                               <span style={{ fontWeight: 'bold', color: '#6d4c41' }}>📋 آخر ملاحظة</span>
-                              <span style={{ color: '#888' }}>{new Date(lastNote.date).toLocaleDateString('ar-SA')}</span>
+                              <span style={{ color: '#888' }}>{new Date(lastNote.date).toLocaleDateString('en-GB')}</span>
                             </div>
                             <div style={{ color: '#555' }}>{lastNote.observations}</div>
                             <div style={{ marginTop: '3px', display: 'flex', gap: '8px' }}>
@@ -2902,7 +3042,7 @@ const App = () => {
                             <div key={cyc.id} style={{ background: cyc.type === 'isolated' ? '#f0f4ff' : '#f9fff9', border: `1px solid ${cyc.type === 'isolated' ? '#c5cae9' : '#a9dfbf'}`, borderRadius: '8px', padding: '9px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                               <div style={{ fontSize: '12px' }}>
                                 <span style={{ fontWeight: 'bold', color: cyc.type === 'isolated' ? '#2471a3' : '#27ae60' }}>{cyc.type === 'isolated' ? '🔒 عزل' : '🔓 تحرير'}</span>
-                                <span style={{ color: '#888', marginRight: '8px' }}>{new Date(cyc.startDate).toLocaleDateString('ar-SA')} → {new Date(cyc.endDate).toLocaleDateString('ar-SA')}</span>
+                                <span style={{ color: '#888', marginRight: '8px' }}>{new Date(cyc.startDate).toLocaleDateString('en-GB')} → {new Date(cyc.endDate).toLocaleDateString('en-GB')}</span>
                               </div>
                               <span style={{ fontWeight: 'bold', color: '#555', fontSize: '13px' }}>{cyc.days} يوم</span>
                             </div>
@@ -2932,7 +3072,7 @@ const App = () => {
                             <div key={note.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '5px', marginBottom: '5px' }}>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                                  <span style={{ fontSize: '12px', color: '#888' }}>{new Date(note.date).toLocaleDateString('ar-SA')}</span>
+                                  <span style={{ fontSize: '12px', color: '#888' }}>{new Date(note.date).toLocaleDateString('en-GB')}</span>
                                   <span style={{ fontWeight: 'bold', fontSize: '12px', color: note.effective === 'yes' ? '#27ae60' : note.effective === 'partial' ? '#e67e22' : '#e74c3c' }}>
                                     {note.effective === 'yes' ? '✅ ناجح' : note.effective === 'partial' ? '⚠️ جزئي' : '❌ لم ينجح'}
                                   </span>
@@ -3165,7 +3305,7 @@ const App = () => {
                       <span>{area}</span>
                       {areaTotal > 0 && <span style={{ color: '#e74c3c', fontSize: '12px' }}>{areaTotal.toLocaleString()} ر</span>}
                     </div>
-                    {recs.map(rec => <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) saveFarmMaint(farmMaintenance.filter(r => r.id !== rec.id)); }} />)}
+                    {recs.map(rec => <MaintRecord key={rec.id} rec={rec} onEdit={() => { setFarmMaintForm({ date: rec.date, title: rec.title, cost: rec.cost||'', description: rec.description||'', technician: rec.technician||'', nextDate: rec.nextDate||'', notes: rec.notes||'', area: rec.area||'' }); setEditFarmMaintId(rec.id); setShowAddFarmMaint(true); }} onDelete={() => { if (window.confirm('حذف؟')) saveFarmMaint(farmMaintenance.filter(r => r.id !== rec.id)); }} />)}
                   </div>
                 );
               })}
@@ -3247,17 +3387,22 @@ const App = () => {
                               👷 {worker.name}
                               <span style={{ background: st.bg, color: st.color, fontSize: '11px', padding: '2px 8px', borderRadius: '8px', fontWeight: 'bold' }}>{st.text}</span>
                               {worker.status === 'travel' && <span style={{ fontSize: '11px', color: '#2471a3' }}>⏸ الراتب موقوف</span>}
+                              {(worker.status === 'travel' || worker.status === 'vacation') && worker.statusDate && (
+                                <span style={{ background: worker.status === 'travel' ? '#d6eaf8' : '#f5eef8', color: worker.status === 'travel' ? '#2471a3' : '#8e44ad', fontSize: '11px', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold' }}>
+                                  ⏱️ {durationText(worker.statusDate)}
+                                </span>
+                              )}
                             </div>
                             {worker.description && <div style={{ fontSize: '12px', color: '#666', marginTop: '3px' }}>💼 {worker.description}</div>}
                             <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                               {worker.nationality && <span>🌍 {worker.nationality}</span>}
-                              {worker.startDate && <span>📅 منذ: {new Date(worker.startDate).toLocaleDateString('ar-SA')}</span>}
+                              {worker.startDate && <span>📅 منذ: {new Date(worker.startDate).toLocaleDateString('en-GB')}</span>}
                               {monthsWorked !== null && <span>⏱️ {monthsWorked} شهر</span>}
                             </div>
                           </div>
                           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
                             <button onClick={() => { setWorkerCostWorkerId(worker.id); setShowAddWorkerCost(true); }} style={{ background: '#fdebd0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>💸 تكلفة</button>
-                            <button onClick={() => { setWorkerForm({ name: worker.name, description: worker.description||'', nationality: worker.nationality||'', salary: worker.salary, startDate: worker.startDate||'', status: worker.status, notes: worker.notes||'' }); setEditWorkerId(worker.id); setShowAddWorker(true); }} style={{ background: '#f0f9f6', border: '1px solid #784212', color: '#784212', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { setWorkerForm({ name: worker.name, description: worker.description||'', nationality: worker.nationality||'', salary: worker.salary, startDate: worker.startDate||'', status: worker.status, statusDate: worker.statusDate||'', notes: worker.notes||'' }); setEditWorkerId(worker.id); setShowAddWorker(true); }} style={{ background: '#f0f9f6', border: '1px solid #784212', color: '#784212', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
                             <button onClick={() => { if (window.confirm(`حذف "${worker.name}"؟`)) saveWorkers(workers.filter(w => w.id !== worker.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
                           </div>
                         </div>
@@ -3305,6 +3450,9 @@ const App = () => {
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🌍 الجنسية</label><input value={workerForm.nationality} onChange={e => setWorkerForm(p => ({ ...p, nationality: e.target.value }))} placeholder="مثال: باكستاني، يمني، سوداني" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 الراتب الشهري (ريال)</label><input type="number" min="0" value={workerForm.salary} onChange={e => setWorkerForm(p => ({ ...p, salary: e.target.value }))} placeholder="مثال: 1200" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الالتحاق</label><input type="date" value={workerForm.startDate} onChange={e => setWorkerForm(p => ({ ...p, startDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        {(workerForm.status === 'travel' || workerForm.status === 'vacation') && (
+                          <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ بدء {workerForm.status === 'travel' ? 'السفر' : 'الإجازة'}</label><input type="date" value={workerForm.statusDate} onChange={e => setWorkerForm(p => ({ ...p, statusDate: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        )}
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الحالة</label>
                           <select value={workerForm.status} onChange={e => setWorkerForm(p => ({ ...p, status: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
                             <option value="active">✅ نشط</option>
@@ -3318,7 +3466,7 @@ const App = () => {
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
                         <button onClick={handleSaveWorker} style={{ background: '#784212', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                        <button onClick={() => { setShowAddWorker(false); setEditWorkerId(null); setWorkerForm({ name: '', description: '', nationality: '', salary: '', startDate: '', status: 'active', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                        <button onClick={() => { setShowAddWorker(false); setEditWorkerId(null); setWorkerForm({ name: '', description: '', nationality: '', salary: '', startDate: '', status: 'active', statusDate: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
@@ -3354,7 +3502,7 @@ const App = () => {
                                 <div>
                                   <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#333' }}>{costTypeLabel(cost.type)}</div>
                                   <div style={{ fontSize: '11px', color: '#888', marginTop: '2px', display: 'flex', gap: '10px' }}>
-                                    <span>📅 {new Date(cost.date).toLocaleDateString('ar-SA')}</span>
+                                    <span>📅 {new Date(cost.date).toLocaleDateString('en-GB')}</span>
                                     {cost.description && <span>📝 {cost.description}</span>}
                                   </div>
                                 </div>
@@ -3483,7 +3631,7 @@ const App = () => {
                           <div key={rec.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                             <div style={{ fontSize: '13px' }}>
                               <span style={{ fontWeight: 'bold', color: '#784212' }}>{typeLabels[rec.type] || typeLabels[rec.mealType] || '🛒 زاد'}</span>
-                              <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>📅 {new Date(rec.date).toLocaleDateString('ar-SA')}</span>
+                              <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>📅 {new Date(rec.date).toLocaleDateString('en-GB')}</span>
                               {rec.notes && <span style={{ color: '#aaa', fontSize: '11px', marginRight: '6px' }}>— {rec.notes}</span>}
                             </div>
                             <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
@@ -3699,8 +3847,8 @@ const App = () => {
 
                         {/* آخر تعبئة والقادمة */}
                         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '12px', color: '#666' }}>
-                          {cyl.lastRefill && <span>⛽ آخر تعبئة: <strong>{new Date(cyl.lastRefill.date).toLocaleDateString('ar-SA')}</strong> ({cyl.daysSinceLast} يوم)</span>}
-                          {cyl.nextEstimate && <span style={{ color: cyl.needsAlert ? '#e74c3c' : '#2e4057' }}>📅 المتوقع القادم: <strong>{new Date(cyl.nextEstimate).toLocaleDateString('ar-SA')}</strong></span>}
+                          {cyl.lastRefill && <span>⛽ آخر تعبئة: <strong>{new Date(cyl.lastRefill.date).toLocaleDateString('en-GB')}</strong> ({cyl.daysSinceLast} يوم)</span>}
+                          {cyl.nextEstimate && <span style={{ color: cyl.needsAlert ? '#e74c3c' : '#2e4057' }}>📅 المتوقع القادم: <strong>{new Date(cyl.nextEstimate).toLocaleDateString('en-GB')}</strong></span>}
                           {cyl.lastRefill?.price > 0 && <span>💰 آخر سعر: <strong>{cyl.lastRefill.price} ر</strong></span>}
                         </div>
                       </div>
@@ -3757,7 +3905,7 @@ const App = () => {
                   {showAddRefill && refillCylinderId && (
                     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddRefill(false)}>
                       <div style={{ background: 'white', borderRadius: '12px', maxWidth: '400px', width: '100%', padding: '20px' }} onClick={e => e.stopPropagation()}>
-                        <h3 style={{ color: '#2e4057', margin: '0 0 15px' }}>⛽ تسجيل تعبئة — {gasCylinders.find(c => c.id === refillCylinderId)?.name}</h3>
+                        <h3 style={{ color: '#2e4057', margin: '0 0 15px' }}>{editRefillId ? '✏️ تعديل تعبئة' : '⛽ تسجيل تعبئة'} — {gasCylinders.find(c => c.id === refillCylinderId)?.name}</h3>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                           <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ التعبئة *</label><input type="date" value={refillForm.date} onChange={e => setRefillForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                           <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر التعبئة (ريال)</label><input type="number" min="0" step="0.5" value={refillForm.price} onChange={e => setRefillForm(p => ({ ...p, price: e.target.value }))} placeholder="مثال: 85" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
@@ -3765,7 +3913,7 @@ const App = () => {
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '15px' }}>
                           <button onClick={handleSaveRefill} style={{ background: '#27ae60', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                          <button onClick={() => setShowAddRefill(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                          <button onClick={() => { setShowAddRefill(false); setEditRefillId(null); setRefillForm({ date: new Date().toISOString().split('T')[0], price: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                         </div>
                       </div>
                     </div>
@@ -3793,12 +3941,13 @@ const App = () => {
                           {refills.map((r, i) => (
                             <div key={r.id} style={{ background: i === 0 ? '#f0f4ff' : 'white', border: `1px solid ${i === 0 ? '#c5cae9' : '#eee'}`, borderRadius: '8px', padding: '10px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                               <div style={{ fontSize: '13px' }}>
-                                <span style={{ fontWeight: 'bold' }}>{new Date(r.date).toLocaleDateString('ar-SA')}</span>
+                                <span style={{ fontWeight: 'bold' }}>{new Date(r.date).toLocaleDateString('en-GB')}</span>
                                 {i === 0 && <span style={{ marginRight: '6px', fontSize: '10px', background: '#2e4057', color: 'white', padding: '1px 5px', borderRadius: '4px' }}>آخر تعبئة</span>}
                                 {r.notes && <span style={{ fontSize: '11px', color: '#888', marginRight: '8px' }}>— {r.notes}</span>}
                               </div>
-                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                                 {r.price > 0 && <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '13px' }}>💰 {r.price} ر</span>}
+                                <button onClick={() => { setRefillForm({ date: r.date, price: r.price||'', notes: r.notes||'' }); setRefillCylinderId(cyl.id); setEditRefillId(r.id); setShowAddRefill(true); }} style={{ background: '#f0f4ff', border: '1px solid #2e4057', color: '#2e4057', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
                                 <button onClick={() => {
                                   if (!window.confirm('حذف هذه التعبئة؟')) return;
                                   const updated = gasCylinders.map(c => c.id === cyl.id ? { ...c, refills: c.refills.filter(x => x.id !== r.id) } : c);
@@ -3863,7 +4012,7 @@ const App = () => {
                                 const barH = Math.round((r.price / maxPrice) * 100);
                                 const isLast = i === arr.length - 1;
                                 return (
-                                  <div key={r.id} title={`${new Date(r.date).toLocaleDateString('ar-SA')}: ${r.price} ر`} style={{ flex: 1, height: `${barH}%`, background: isLast ? '#2e4057' : '#c5cae9', borderRadius: '3px 3px 0 0', minHeight: '4px', cursor: 'pointer' }} />
+                                  <div key={r.id} title={`${new Date(r.date).toLocaleDateString('en-GB')}: ${r.price} ر`} style={{ flex: 1, height: `${barH}%`, background: isLast ? '#2e4057' : '#c5cae9', borderRadius: '3px 3px 0 0', minHeight: '4px', cursor: 'pointer' }} />
                                 );
                               })}
                             </div>
@@ -4066,7 +4215,7 @@ const App = () => {
                               {bat.capacity && <span>⚡ {bat.capacity} Ah</span>}
                               {bat.voltage && <span>🔌 {bat.voltage}V</span>}
                             </div>
-                            {bat.purchaseDate && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>📅 تاريخ الشراء: {new Date(bat.purchaseDate).toLocaleDateString('ar-SA')}</div>}
+                            {bat.purchaseDate && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>📅 تاريخ الشراء: {new Date(bat.purchaseDate).toLocaleDateString('en-GB')}</div>}
                           </div>
                           <div style={{ display: 'flex', gap: '6px' }}>
                             <button onClick={() => { saveBatteries(batteries.map(b => b.id === bat.id ? { ...b, serviceStatus: b.serviceStatus === 'retired' ? 'active' : 'retired' } : b)); }} style={{ background: bat.serviceStatus === 'retired' ? '#d5f5e3' : '#fdebd0', border: `1px solid ${bat.serviceStatus === 'retired' ? '#27ae60' : '#e67e22'}`, color: bat.serviceStatus === 'retired' ? '#27ae60' : '#e67e22', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>{bat.serviceStatus === 'retired' ? '▶ تفعيل' : '⏹ تقاعد'}</button>
@@ -4232,7 +4381,7 @@ const App = () => {
                               <div style={{ height: '100%', width: `${wPct}%`, background: wColor, borderRadius: '3px' }} />
                             </div>
                           )}
-                          {panel.lastWash && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '3px' }}>آخر غسيل: {new Date(panel.lastWash).toLocaleDateString('ar-SA')}</div>}
+                          {panel.lastWash && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '3px' }}>آخر غسيل: {new Date(panel.lastWash).toLocaleDateString('en-GB')}</div>}
                         </div>
                       </div>
                     );
@@ -4291,7 +4440,7 @@ const App = () => {
                             <div style={{ fontSize: '12px', color: '#666', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                               {inv.brand && <span>🏷️ {inv.brand}</span>}
                               {inv.capacity && <span>⚡ {inv.capacity} KW</span>}
-                              {inv.purchaseDate && <span>📅 {new Date(inv.purchaseDate).toLocaleDateString('ar-SA')}</span>}
+                              {inv.purchaseDate && <span>📅 {new Date(inv.purchaseDate).toLocaleDateString('en-GB')}</span>}
                             </div>
                           </div>
                           <div style={{ display: 'flex', gap: '6px' }}>
@@ -4451,7 +4600,7 @@ const App = () => {
                   )}
 
                   {[...solarMaintenance].sort((a,b) => new Date(b.date)-new Date(a.date)).map(rec =>
-                    <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) saveSolarMaint(solarMaintenance.filter(r => r.id !== rec.id)); }} />
+                    <MaintRecord key={rec.id} rec={rec} onEdit={() => { setSolarMaintForm({ date: rec.date, title: rec.title, cost: rec.cost||'', description: rec.description||'', technician: rec.technician||'', nextDate: rec.nextDate||'', notes: rec.notes||'', system: rec.system||'battery' }); setEditSolarMaintId(rec.id); setShowAddSolarMaint(true); }} onDelete={() => { if (window.confirm('حذف؟')) saveSolarMaint(solarMaintenance.filter(r => r.id !== rec.id)); }} />
                   )}
                   {solarMaintenance.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🔧</div><div>لا توجد سجلات صيانة بعد</div></div>}
                 </div>
@@ -4530,7 +4679,7 @@ const App = () => {
                               )}
                               {batteryLifespanAnalysis.avgActualYears && (
                                 <div style={{ background: 'white', borderRadius: '7px', padding: '7px', textAlign: 'center', border: '1px solid #eee' }}>
-                                  <div style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '10px' }}>{bat.smartEndDate.toLocaleDateString('ar-SA')}</div>
+                                  <div style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '10px' }}>{bat.smartEndDate.toLocaleDateString('en-GB')}</div>
                                   <div style={{ color: '#888' }}>تاريخ الاستبدال المتوقع</div>
                                 </div>
                               )}
@@ -4887,7 +5036,7 @@ const App = () => {
                             </>}
                             {f.daysLeft !== null && <div style={{ background: f.daysLeft <= 7 ? '#fadbd8' : f.daysLeft <= 21 ? '#fdebd0' : '#d5f5e3', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: f.daysLeft <= 7 ? '#e74c3c' : f.daysLeft <= 21 ? '#e67e22' : '#27ae60' }}>{f.daysLeft} يوم</div><div style={{ color: '#888', fontSize: '10px' }}>يكفي المخزون</div></div>}
                           </div>
-                          {f.lastPrice && <div style={{ fontSize: '11px', color: '#888', marginTop: '6px' }}>آخر سعر: {f.lastPrice.price} ر/{f.unit} بتاريخ {new Date(f.lastPrice.date).toLocaleDateString('ar-SA')}</div>}
+                          {f.lastPrice && <div style={{ fontSize: '11px', color: '#888', marginTop: '6px' }}>آخر سعر: {f.lastPrice.price} ر/{f.unit} بتاريخ {new Date(f.lastPrice.date).toLocaleDateString('en-GB')}</div>}
                         </div>
                       );
                     })}
@@ -4934,7 +5083,7 @@ const App = () => {
                       {smartConsumption.filter(f => f.needsAlert).map(f => (
                         <div key={f.id} style={{ fontSize: '12px', color: '#555', marginBottom: '3px' }}>
                           🌾 <strong>{f.name}</strong> — باقي تقريباً <strong style={{ color: '#e74c3c' }}>{f.daysUntilNext} يوم</strong>
-                          {f.nextPurchaseEstimate && <span style={{ color: '#888', marginRight: '8px' }}>(الشراء المتوقع: {new Date(f.nextPurchaseEstimate).toLocaleDateString('ar-SA')})</span>}
+                          {f.nextPurchaseEstimate && <span style={{ color: '#888', marginRight: '8px' }}>(الشراء المتوقع: {new Date(f.nextPurchaseEstimate).toLocaleDateString('en-GB')})</span>}
                         </div>
                       ))}
                     </div>
@@ -5028,7 +5177,7 @@ const App = () => {
                               <div style={{ background: feed.needsAlert ? '#fff3e0' : '#f0f9f6', borderRadius: '8px', padding: '9px 12px', marginBottom: '10px', border: `1px solid ${feed.needsAlert ? '#e67e22' : '#a9dfbf'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                                 <span style={{ fontSize: '12px', color: '#555' }}>📅 الشراء القادم المتوقع:</span>
                                 <span style={{ fontWeight: 'bold', color: feed.needsAlert ? '#e67e22' : '#27ae60', fontSize: '13px' }}>
-                                  {new Date(feed.nextPurchaseEstimate).toLocaleDateString('ar-SA')}
+                                  {new Date(feed.nextPurchaseEstimate).toLocaleDateString('en-GB')}
                                   <span style={{ fontSize: '11px', color: '#888', marginRight: '6px' }}>({feed.daysUntilNext} يوم)</span>
                                 </span>
                               </div>
@@ -5039,7 +5188,7 @@ const App = () => {
                               <div style={{ background: '#f9f3e8', padding: '7px 12px', fontSize: '11px', fontWeight: 'bold', color: '#6e4b1f' }}>📋 تفاصيل الفترات المحسوبة</div>
                               {feed.intervals.map((iv, i) => (
                                 <div key={i} style={{ padding: '7px 12px', borderBottom: '1px solid #f5f5f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '4px', background: i % 2 === 0 ? 'white' : '#faf8f5', fontSize: '12px' }}>
-                                  <span style={{ color: '#888' }}>{new Date(iv.from).toLocaleDateString('ar-SA')} ← {new Date(iv.to).toLocaleDateString('ar-SA')}</span>
+                                  <span style={{ color: '#888' }}>{new Date(iv.from).toLocaleDateString('en-GB')} ← {new Date(iv.to).toLocaleDateString('en-GB')}</span>
                                   <div style={{ display: 'flex', gap: '12px' }}>
                                     <span>{iv.qty} {feed.unit} / {iv.days} يوم</span>
                                     <span style={{ fontWeight: 'bold', color: '#6e4b1f' }}>{iv.dailyBags.toFixed(2)} {feed.unit}/يوم</span>
@@ -5048,7 +5197,7 @@ const App = () => {
                               ))}
                               {/* آخر شراء */}
                               <div style={{ padding: '7px 12px', background: '#fef9e7', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '4px', fontSize: '12px', borderTop: '1px solid #f0e68c' }}>
-                                <span style={{ color: '#b7950b', fontWeight: 'bold' }}>⛽ آخر شراء: {new Date(feed.lastPurchaseDate).toLocaleDateString('ar-SA')}</span>
+                                <span style={{ color: '#b7950b', fontWeight: 'bold' }}>⛽ آخر شراء: {new Date(feed.lastPurchaseDate).toLocaleDateString('en-GB')}</span>
                                 <span style={{ color: '#888' }}>{feed.lastPurchaseQty} {feed.unit} — مضى {feed.daysFromLastPurchase} يوم</span>
                               </div>
                             </div>
@@ -5312,9 +5461,9 @@ const App = () => {
                               <div style={{ height: '100%', width: `${pct}%`, background: lifeColor, borderRadius: '5px', transition: 'width 0.3s' }} />
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#aaa', marginTop: '3px' }}>
-                              <span>اشتري: {new Date(pump.purchaseDate).toLocaleDateString('ar-SA')}</span>
+                              <span>اشتري: {new Date(pump.purchaseDate).toLocaleDateString('en-GB')}</span>
                               <span>عمره الحالي: {years > 0 ? `${years} سنة ` : ''}{months > 0 ? `${months} شهر` : ''}</span>
-                              <span>ينتهي: {new Date(new Date(pump.purchaseDate).getTime() + pump.lifespan * 86400000).toLocaleDateString('ar-SA')}</span>
+                              <span>ينتهي: {new Date(new Date(pump.purchaseDate).getTime() + pump.lifespan * 86400000).toLocaleDateString('en-GB')}</span>
                             </div>
                           </div>
                         )}
@@ -5325,7 +5474,7 @@ const App = () => {
                             <div style={{ fontWeight: 'bold', color: '#555', marginBottom: '4px' }}>🛢️ حالة الزيت</div>
                             {oil.lastDate ? (
                               <>
-                                <div>آخر تغيير: {new Date(oil.lastDate).toLocaleDateString('ar-SA')} ({oil.daysAgo} يوم)</div>
+                                <div>آخر تغيير: {new Date(oil.lastDate).toLocaleDateString('en-GB')} ({oil.daysAgo} يوم)</div>
                                 <div style={{ color: oil.daysLeft <= 0 ? '#e74c3c' : oil.daysLeft <= 3 ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>
                                   {oil.daysLeft <= 0 ? `⚠️ متأخر ${Math.abs(oil.daysLeft)} يوم!` : `باقي ${oil.daysLeft} يوم للتغيير`}
                                 </div>
@@ -5346,7 +5495,7 @@ const App = () => {
                         {/* آخر بوجي */}
                         {(pump.sparkHistory || []).length > 0 && (
                           <div style={{ marginTop: '8px', background: '#fffbf0', borderRadius: '8px', padding: '8px 10px', fontSize: '12px', border: '1px solid #f0e68c' }}>
-                            ⚡ آخر تغيير بوجي: {new Date([...pump.sparkHistory].sort((a, b) => new Date(b.date) - new Date(a.date))[0].date).toLocaleDateString('ar-SA')}
+                            ⚡ آخر تغيير بوجي: {new Date([...pump.sparkHistory].sort((a, b) => new Date(b.date) - new Date(a.date))[0].date).toLocaleDateString('en-GB')}
                             {' · '}الماركة: {[...pump.sparkHistory].sort((a, b) => new Date(b.date) - new Date(a.date))[0].brand || 'غير محدد'}
                           </div>
                         )}
@@ -5470,7 +5619,7 @@ const App = () => {
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' }}>
                               <button onClick={handleSaveOilChange} style={{ background: '#e67e22', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
-                              <button onClick={() => setShowAddOilChange(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                              <button onClick={() => { setShowAddOilChange(false); setEditOilId(null); setEditOilPumpId(null); setOilChangeForm({ date: new Date().toISOString().split('T')[0], boxes: 1, cost: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                             </div>
                           </div>
                         ) : (
@@ -5482,13 +5631,16 @@ const App = () => {
                         {history.length === 0 ? <div style={{ color: '#bbb', textAlign: 'center', padding: '20px' }}>لا يوجد سجلات بعد</div> : history.map((h, i) => (
                           <div key={h.id} style={{ background: i === 0 ? '#fff8e1' : 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                             <div style={{ fontSize: '13px' }}>
-                              <span style={{ fontWeight: 'bold' }}>{new Date(h.date).toLocaleDateString('ar-SA')}</span>
+                              <span style={{ fontWeight: 'bold' }}>{new Date(h.date).toLocaleDateString('en-GB')}</span>
                               {i === 0 && <span style={{ marginRight: '6px', fontSize: '11px', background: '#e67e22', color: 'white', padding: '1px 5px', borderRadius: '4px' }}>آخر تغيير</span>}
                               <span style={{ color: '#888', fontSize: '12px', marginRight: '8px' }}>{h.boxes} {pump.oilCapacity ? 'لتر' : 'علبة'}</span>
                               {h.cost > 0 && <span style={{ color: '#27ae60', fontSize: '12px' }}>💰 {h.cost} ر</span>}
                               {h.notes && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>{h.notes}</div>}
                             </div>
-                            <button onClick={() => { if (window.confirm('حذف هذا السجل؟')) { const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, oilChangeHistory: p.oilChangeHistory.filter(x => x.id !== h.id) } : p); savePumps(updated); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                              <button onClick={() => { setOilChangeForm({ date: h.date, boxes: h.boxes, cost: h.cost||'', notes: h.notes||'' }); setEditOilId(h.id); setEditOilPumpId(selectedPumpId); setShowAddOilChange(true); }} style={{ background: '#fff8e1', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
+                              <button onClick={() => { if (window.confirm('حذف هذا السجل؟')) { const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, oilChangeHistory: p.oilChangeHistory.filter(x => x.id !== h.id) } : p); savePumps(updated); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -5520,7 +5672,7 @@ const App = () => {
                           <div style={{ background: '#fffbf0', border: '1px solid #f0e68c', borderRadius: '10px', padding: '12px', marginBottom: '15px' }}>
                             <div style={{ fontWeight: 'bold', color: '#b7950b', marginBottom: '6px' }}>⚡ حالة البوجي — {pump.name}</div>
                             <div style={{ fontSize: '13px', color: '#555' }}>
-                              آخر تغيير: <strong>{new Date(last.date).toLocaleDateString('ar-SA')}</strong> ({daysSince} يوم)
+                              آخر تغيير: <strong>{new Date(last.date).toLocaleDateString('en-GB')}</strong> ({daysSince} يوم)
                               {last.brand && <> · الماركة: <strong>{last.brand}</strong></>}
                               {last.cost > 0 && <> · التكلفة: <strong style={{ color: '#27ae60' }}>{last.cost} ر</strong></>}
                             </div>
@@ -5549,13 +5701,16 @@ const App = () => {
                         {history.length === 0 ? <div style={{ color: '#bbb', textAlign: 'center', padding: '20px' }}>لا يوجد سجلات بعد</div> : history.map((h, i) => (
                           <div key={h.id} style={{ background: i === 0 ? '#fffbf0' : 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                             <div style={{ fontSize: '13px' }}>
-                              <span style={{ fontWeight: 'bold' }}>{new Date(h.date).toLocaleDateString('ar-SA')}</span>
+                              <span style={{ fontWeight: 'bold' }}>{new Date(h.date).toLocaleDateString('en-GB')}</span>
                               {i === 0 && <span style={{ marginRight: '6px', fontSize: '11px', background: '#d4ac0d', color: 'white', padding: '1px 5px', borderRadius: '4px' }}>آخر تغيير</span>}
                               {h.brand && <span style={{ color: '#888', fontSize: '12px', marginRight: '8px' }}>⚡ {h.brand}</span>}
                               {h.cost > 0 && <span style={{ color: '#27ae60', fontSize: '12px' }}>💰 {h.cost} ر</span>}
                               {h.notes && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>{h.notes}</div>}
                             </div>
-                            <button onClick={() => { if (window.confirm('حذف؟')) { const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, sparkHistory: p.sparkHistory.filter(x => x.id !== h.id) } : p); savePumps(updated); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                              <button onClick={() => { setSparkForm({ date: h.date, brand: h.brand||'', cost: h.cost||'', notes: h.notes||'' }); setEditSparkId(h.id); setEditSparkPumpId(selectedPumpId); setShowAddSpark(true); }} style={{ background: '#fffbf0', border: '1px solid #f0e68c', color: '#b7950b', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
+                              <button onClick={() => { if (window.confirm('حذف؟')) { const updated = pumps.map(p => p.id === selectedPumpId ? { ...p, sparkHistory: p.sparkHistory.filter(x => x.id !== h.id) } : p); savePumps(updated); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -5585,7 +5740,7 @@ const App = () => {
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 رأيك من التجربة</label><textarea value={brandForm.review} onChange={e => setBrandForm(p => ({ ...p, review: e.target.value }))} placeholder="اكتب تجربتك مع هذه الماركة — إيجابيات وسلبيات..." rows={3} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
-                        <button onClick={() => { if (!brandForm.name) { alert('أدخل اسم الماركة'); return; } savePumpBrands([...pumpBrands, { id: `br_${Date.now()}`, ...brandForm, price: parseFloat(brandForm.price) || 0 }]); setBrandForm({ name: '', rating: 'good', review: '', price: '' }); setShowAddBrand(false); }} style={{ background: '#2c3e50', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { if (!brandForm.name) { alert('أدخل اسم الماركة'); return; } if (editBrandId) { savePumpBrands(pumpBrands.map(b => b.id === editBrandId ? { ...b, ...brandForm, price: parseFloat(brandForm.price)||0 } : b)); setEditBrandId(null); } else { savePumpBrands([...pumpBrands, { id: `br_${Date.now()}`, ...brandForm, price: parseFloat(brandForm.price) || 0 }]); } setBrandForm({ name: '', rating: 'good', review: '', price: '' }); setShowAddBrand(false); }} style={{ background: '#2c3e50', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
                         <button onClick={() => setShowAddBrand(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
@@ -5613,6 +5768,7 @@ const App = () => {
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <span style={{ background: ratingBg[brand.rating], color: ratingColors[brand.rating], fontSize: '12px', padding: '3px 8px', borderRadius: '8px', fontWeight: 'bold' }}>{stars[brand.rating]}</span>
+                                <button onClick={() => { setBrandForm({ name: brand.name, rating: brand.rating, review: brand.review||'', price: brand.price||'' }); setEditBrandId(brand.id); setShowAddBrand(true); }} style={{ background: '#f5f6fa', border: '1px solid #2c3e50', color: '#2c3e50', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
                                 <button onClick={() => { if (window.confirm('حذف؟')) savePumpBrands(pumpBrands.filter(b => b.id !== brand.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
                               </div>
                             </div>
@@ -5676,8 +5832,8 @@ const App = () => {
                             </div>
                             {pump.lastFill && (
                               <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                                <span>⛽ آخر تعبئة: {new Date(pump.lastFill.date).toLocaleDateString('ar-SA')} ({pump.daysSinceLast} يوم)</span>
-                                {pump.nextEstimate && <span style={{ color: pump.needsAlert ? '#e74c3c' : '#2c3e50', fontWeight: 'bold' }}>📅 القادمة: {new Date(pump.nextEstimate).toLocaleDateString('ar-SA')}</span>}
+                                <span>⛽ آخر تعبئة: {new Date(pump.lastFill.date).toLocaleDateString('en-GB')} ({pump.daysSinceLast} يوم)</span>
+                                {pump.nextEstimate && <span style={{ color: pump.needsAlert ? '#e74c3c' : '#2c3e50', fontWeight: 'bold' }}>📅 القادمة: {new Date(pump.nextEstimate).toLocaleDateString('en-GB')}</span>}
                               </div>
                             )}
                           </div>
@@ -5714,9 +5870,10 @@ const App = () => {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                               {recentRecords.map((r, i) => (
                                 <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: i === 0 ? '#fdebd0' : '#f9f9f9', borderRadius: '6px', padding: '5px 10px', fontSize: '12px' }}>
-                                  <span>{new Date(r.date).toLocaleDateString('ar-SA')}{r.notes ? ` — ${r.notes}` : ''}</span>
+                                  <span>{new Date(r.date).toLocaleDateString('en-GB')}{r.notes ? ` — ${r.notes}` : ''}</span>
                                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                     {r.price > 0 && <span style={{ fontWeight: 'bold', color: '#e67e22' }}>{r.price} ر</span>}
+                                    <button onClick={() => { setPetrolForm({ pumpId: r.pumpId, date: r.date, price: r.price||'', notes: r.notes||'' }); setEditPetrolId(r.id); setShowAddPetrol(true); }} style={{ background: 'none', border: 'none', color: '#e67e22', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
                                     <button onClick={() => { if (window.confirm('حذف؟')) savePetrolRecords(petrolRecords.filter(x => x.id !== r.id)); }} style={{ background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
                                   </div>
                                 </div>
@@ -5733,7 +5890,7 @@ const App = () => {
                               {[...pump.records].sort((a,b)=>new Date(a.date)-new Date(b.date)).filter(r=>r.price>0).slice(-12).map((r,i,arr)=>{
                                 const maxP = Math.max(...arr.map(x=>x.price));
                                 const h = Math.round((r.price/maxP)*100);
-                                return <div key={r.id} title={`${new Date(r.date).toLocaleDateString('ar-SA')}: ${r.price} ر`} style={{ flex:1, height:`${h}%`, background: i===arr.length-1?'#e67e22':'#f0d0a0', borderRadius:'2px 2px 0 0', minHeight:'3px', cursor:'pointer' }} />;
+                                return <div key={r.id} title={`${new Date(r.date).toLocaleDateString('en-GB')}: ${r.price} ر`} style={{ flex:1, height:`${h}%`, background: i===arr.length-1?'#e67e22':'#f0d0a0', borderRadius:'2px 2px 0 0', minHeight:'3px', cursor:'pointer' }} />;
                               })}
                             </div>
                           </div>
@@ -5840,7 +5997,7 @@ const App = () => {
                           <span>⚙️ {pump.name}</span>
                           <span style={{ color: '#e74c3c', fontSize: '12px' }}>{pumpTotal.toLocaleString()} ر</span>
                         </div>
-                        {recs.map(rec => <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) savePumpMaint(pumpMaintenance.filter(r => r.id !== rec.id)); }} />)}
+                        {recs.map(rec => <MaintRecord key={rec.id} rec={rec} onEdit={() => { setPumpMaintForm({ date: rec.date, title: rec.title, cost: rec.cost||'', description: rec.description||'', technician: rec.technician||'', nextDate: rec.nextDate||'', notes: rec.notes||'' }); setEditPumpMaintId(rec.id); setPumpMaintPumpId(rec.pumpId); setShowAddPumpMaint(true); }} onDelete={() => { if (window.confirm('حذف؟')) savePumpMaint(pumpMaintenance.filter(r => r.id !== rec.id)); }} />)}
                       </div>
                     );
                   })}
@@ -5848,7 +6005,7 @@ const App = () => {
                   {pumpMaintenance.filter(r => r.pumpId === 'general').length > 0 && (
                     <div style={{ marginBottom: '14px' }}>
                       <div style={{ fontWeight: 'bold', color: '#2c3e50', fontSize: '13px', marginBottom: '6px' }}>⚙️ عام (كل المواطير)</div>
-                      {pumpMaintenance.filter(r => r.pumpId === 'general').sort((a,b) => new Date(b.date)-new Date(a.date)).map(rec => <MaintRecord key={rec.id} rec={rec} onDelete={() => { if (window.confirm('حذف؟')) savePumpMaint(pumpMaintenance.filter(r => r.id !== rec.id)); }} />)}
+                      {pumpMaintenance.filter(r => r.pumpId === 'general').sort((a,b) => new Date(b.date)-new Date(a.date)).map(rec => <MaintRecord key={rec.id} rec={rec} onEdit={() => { setPumpMaintForm({ date: rec.date, title: rec.title, cost: rec.cost||'', description: rec.description||'', technician: rec.technician||'', nextDate: rec.nextDate||'', notes: rec.notes||'' }); setEditPumpMaintId(rec.id); setPumpMaintPumpId('general'); setShowAddPumpMaint(true); }} onDelete={() => { if (window.confirm('حذف؟')) savePumpMaint(pumpMaintenance.filter(r => r.id !== rec.id)); }} />)}
                     </div>
                   )}
                   {pumpMaintenance.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🔧</div><div>لا توجد سجلات صيانة بعد</div></div>}
@@ -5959,9 +6116,9 @@ const App = () => {
                                       <span style={{ background: '#e8eaf6', color: '#3949ab', borderRadius: '4px', padding: '1px 6px', fontSize: '11px', fontWeight: 'bold' }}>دفعة {bi + 1}</span>
                                       <span><strong>{batch.boxes}</strong> {med.unit}</span>
                                       {batch.cost > 0 && <span style={{ color: '#27ae60', fontWeight: 'bold' }}>💰 {batch.cost} ر</span>}
-                                      {batch.purchaseDate && <span style={{ color: '#888' }}>🛒 {new Date(batch.purchaseDate).toLocaleDateString('ar-SA')}</span>}
+                                      {batch.purchaseDate && <span style={{ color: '#888' }}>🛒 {new Date(batch.purchaseDate).toLocaleDateString('en-GB')}</span>}
                                       <span style={{ color: bExpired ? '#e74c3c' : bExpiring ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>
-                                        📅 {new Date(batch.expiry).toLocaleDateString('ar-SA')}
+                                        📅 {new Date(batch.expiry).toLocaleDateString('en-GB')}
                                         {d !== null && <span style={{ fontSize: '11px', marginRight: '4px' }}>({bExpired ? `منتهي منذ ${Math.abs(d)} يوم` : `باقي ${d} يوم`})</span>}
                                       </span>
                                       {batch.notes && <span style={{ color: '#aaa', fontSize: '11px' }}>— {batch.notes}</span>}
@@ -6111,7 +6268,7 @@ const App = () => {
                                 <span style={{ marginRight: '8px', fontSize: '12px', color: '#888' }}>{tr.animalType === 'sheep' ? '🐑' : tr.animalType === 'goat' ? '🐐' : '🐄'}</span>
                               </div>
                               <div style={{ fontSize: '12px', color: '#666', marginTop: '4px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                                <span>📅 {new Date(tr.date).toLocaleDateString('ar-SA')}</span>
+                                <span>📅 {new Date(tr.date).toLocaleDateString('en-GB')}</span>
                                 <span>💊 {tr.medicine}</span>
                                 {tr.dose && <span>💉 {tr.dose}</span>}
                               </div>
@@ -6313,8 +6470,8 @@ const App = () => {
                           <span style={{ marginRight: '8px', fontSize: '12px', color: '#888' }}>{animal.type === 'sheep' ? '🐑 ضان' : animal.type === 'goat' ? '🐐 ماعز' : `🐄 ${animal.type}`}</span>
                         </div>
                         <div style={{ fontSize: '12px', color: '#888', marginTop: '3px' }}>
-                          📅 تاريخ البيع: {new Date(animal.saleDate).toLocaleDateString('ar-SA')}
-                          {animal.purchaseDate && <span style={{ marginRight: '10px' }}>🛒 تاريخ الشراء: {new Date(animal.purchaseDate).toLocaleDateString('ar-SA')}</span>}
+                          📅 تاريخ البيع: {new Date(animal.saleDate).toLocaleDateString('en-GB')}
+                          {animal.purchaseDate && <span style={{ marginRight: '10px' }}>🛒 تاريخ الشراء: {new Date(animal.purchaseDate).toLocaleDateString('en-GB')}</span>}
                         </div>
                       </div>
                       <div style={{ textAlign: 'left', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -6357,7 +6514,7 @@ const App = () => {
                                 <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                                   <span>🛒 شراء: {animal.purchasePriceNum.toLocaleString()} ر</span>
                                   <span>💵 بيع: {animal.salePriceNum.toLocaleString()} ر</span>
-                                  <span>📅 {new Date(animal.saleDate).toLocaleDateString('ar-SA')}</span>
+                                  <span>📅 {new Date(animal.saleDate).toLocaleDateString('en-GB')}</span>
                                 </div>
                               </div>
                               <div style={{ background: isProfit ? '#27ae60' : '#e74c3c', color: 'white', borderRadius: '8px', padding: '8px 14px', textAlign: 'center', minWidth: '90px' }}>
@@ -6512,8 +6669,14 @@ const App = () => {
               <p style={{ margin: '5px 0 0', fontSize: '12px', opacity: 0.85 }}>الحيوانات النشطة مرتبة من الأكبر للأصغر</p>
             </div>
 
-            {/* فلاتر */}
-            <div style={{ padding: '20px 25px', background: '#f9f7f4', borderBottom: '1px solid #eee' }}>
+            {/* التبويبات */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f9f7f4' }}>
+              {[{ key: 'list', label: '👴 قائمة العويد' }, { key: 'lastbirth', label: '🐣 آخر ولادة' }].map(tab => (
+                <button key={tab.key} onClick={() => setAgeReportTab(tab.key)} style={{ flex: 1, padding: '11px', background: ageReportTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: ageReportTab === tab.key ? '3px solid #8e44ad' : '3px solid transparent', cursor: 'pointer', fontWeight: ageReportTab === tab.key ? 'bold' : 'normal', color: ageReportTab === tab.key ? '#8e44ad' : '#888', fontSize: isMobile ? '12px' : '13px' }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '12px', alignItems: 'end' }}>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#555', display: 'block', marginBottom: '5px' }}>نوع الحيوان</label>
@@ -6589,6 +6752,62 @@ const App = () => {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* ===== تبويب آخر ولادة ===== */}
+              {ageReportTab === 'lastbirth' && (
+                <div style={{ padding: '15px 20px' }}>
+                  <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f9f7f4', borderRadius: '8px', padding: '8px 12px' }}>
+                    يعرض آخر تاريخ ولادة لكل أنثى مع عداد الوقت المنقضي منذها
+                  </div>
+                  {(() => {
+                    const typesToSearch = ageReportFilter.type === 'all' ? Object.keys(animals) : [ageReportFilter.type];
+                    const rows = [];
+                    typesToSearch.forEach(type => {
+                      const typeAnimals = animals[type] || {};
+                      Object.entries(typeAnimals).forEach(([num, animal]) => {
+                        if (animal.gender !== 'female') return;
+                        const births = animal.birthHistory || [];
+                        if (births.length === 0) return;
+                        const sorted = [...births].sort((a,b) => new Date(b.date) - new Date(a.date));
+                        const last = sorted[0];
+                        const totalDays = Math.floor((new Date() - new Date(last.date)) / 86400000);
+                        const years = Math.floor(totalDays / 365);
+                        const months = Math.floor((totalDays % 365) / 30);
+                        const days = totalDays % 30;
+                        const parts = [];
+                        if (years > 0) parts.push(`${years} سنة`);
+                        if (months > 0) parts.push(`${months} شهر`);
+                        if (days > 0 || parts.length === 0) parts.push(`${days} يوم`);
+                        rows.push({ num, type, animal, last, elapsed: parts.join(' و'), totalDays, totalBirths: births.length });
+                      });
+                    });
+                    rows.sort((a, b) => b.totalDays - a.totalDays);
+                    if (rows.length === 0) return <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}>لا توجد إناث لديهن سجل ولادات</div>;
+                    return rows.map(r => {
+                      const isLong = r.totalDays > 365;
+                      return (
+                        <div key={`${r.type}-${r.num}`} style={{ background: isLong ? '#fff8f0' : 'white', border: `1px solid ${isLong ? '#e67e22' : '#eee'}`, borderRadius: '9px', padding: '11px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a1a6b' }}>
+                              رقم {r.num}
+                              <span style={{ fontSize: '11px', color: '#888', fontWeight: 'normal', marginRight: '8px' }}>{r.type} · {r.totalBirths} ولادة إجمالاً</span>
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+                              آخر ولادة: <strong>{new Date(r.last.date).toLocaleDateString('en-GB')}</strong>
+                              {r.last.count && <span style={{ marginRight: '8px', color: '#888' }}>· {r.last.count} مولود</span>}
+                              {r.last.gender && <span style={{ color: '#888' }}>({r.last.gender === 'male' ? 'ذكور' : r.last.gender === 'female' ? 'إناث' : 'مختلط'})</span>}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'center', background: isLong ? '#fdebd0' : '#f5eef8', borderRadius: '8px', padding: '6px 14px', border: `1px solid ${isLong ? '#e67e22' : '#d2b4de'}` }}>
+                            <div style={{ fontWeight: 'bold', color: isLong ? '#e67e22' : '#8e44ad', fontSize: '13px' }}>{r.elapsed}</div>
+                            <div style={{ fontSize: '10px', color: '#888', marginTop: '2px' }}>بلا ولادة</div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               )}
             </div>
