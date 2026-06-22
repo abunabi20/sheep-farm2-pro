@@ -2722,7 +2722,6 @@ const App = () => {
                 </div>
               ))}
             </div>
-            </div>
             )}
 
             {/* تبويب إحصائية الإنتاج */}
@@ -6721,9 +6720,7 @@ const App = () => {
             </div>
 
             {/* النتائج */}
-            <div style={{ maxHeight: '450px', overflowY: 'auto' }}>
-            {ageReportTab === 'list' && (
-            <div style={{ padding: '15px 25px' }}>
+            <div style={{ maxHeight: '450px', overflowY: 'auto' }}>{ageReportTab === 'list' ? <div style={{ padding: '15px 25px' }}>
               {ageReportAnimals.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
                   <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔍</div>
@@ -6760,12 +6757,7 @@ const App = () => {
                   ))}
                 </div>
               )}
-            </div>
-            )}
-
-              {/* ===== تبويب آخر ولادة ===== */}
-              {ageReportTab === 'lastbirth' && (
-                <div style={{ padding: '15px 20px' }}>
+            </div> : ageReportTab === 'lastbirth' ? <div style={{ padding: '15px 20px' }}>
                   <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f9f7f4', borderRadius: '8px', padding: '8px 12px' }}>
                     يعرض آخر تاريخ ولادة لكل أنثى مع عداد الوقت المنقضي منذها
                   </div>
@@ -6816,16 +6808,14 @@ const App = () => {
                       );
                     });
                   })()}
-                </div>
-              )}
-            </div>{/* end wrapper */}
+                </div> : null}
+            </div>
 
             {/* Footer */}
             <div style={{ padding: '15px 25px', borderTop: '1px solid #eee' }}>
               <button onClick={() => setShowAgeReport(false)} style={{ width: '100%', background: '#8e44ad', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
-        </div>
       )}
     </div>
   );
