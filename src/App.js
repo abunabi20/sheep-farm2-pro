@@ -831,7 +831,6 @@ const App = () => {
       const needsCritical = !isSilenced && currentStock < 2;
       // أقدم الدفعات بتاريخ أقرب انتهاء
       const activeBatches = purchases.map((p, i) => {
-        const used = i === 0 ? Math.min(totalWithdrawn, parseFloat(p.qty) || 0) : 0;
         return { ...p, remaining: Math.max(0, (parseFloat(p.qty) || 0) - (i === 0 ? totalWithdrawn : 0)) };
       }).filter(b => b.remaining > 0);
       return { ...drug, purchases, totalPurchased, totalWithdrawn, currentStock, needsAlert, needsCritical, activeBatches };
