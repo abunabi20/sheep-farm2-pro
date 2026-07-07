@@ -1,4 +1,4 @@
-    import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 
@@ -114,18 +114,63 @@ const App = () => {
 
   // ===== المكتبة البيطرية =====
   const [showVetLibrary, setShowVetLibrary] = useState(false);
-  const [vetTab, setVetTab] = useState('inventory'); // inventory | treatments | experiences
-  // مخزون الأدوية
+  const [vetTab, setVetTab] = useState('inventory'); // inventory | drugnames | purchases | history | costs
+
+  // قائمة أسماء الأدوية الثابتة
+  const DEFAULT_DRUG_NAMES = [
+    { id: 'dn1', name: 'تايلوزين', unit: 'علبة', category: 'مضاد حيوي', minAlert: 3 },
+    { id: 'dn2', name: 'بي كمبلكس', unit: 'علبة', category: 'فيتامينات', minAlert: 3 },
+    { id: 'dn3', name: 'أبو ثور', unit: 'علبة', category: 'مضاد حيوي', minAlert: 3 },
+    { id: 'dn4', name: 'علاج الإسهال', unit: 'علبة', category: 'علاج', minAlert: 3 },
+    { id: 'dn5', name: 'فيتامين E + سيلينيوم', unit: 'علبة', category: 'فيتامينات', minAlert: 2 },
+    { id: 'dn6', name: 'ملح معدني', unit: 'كيس', category: 'مكملات', minAlert: 2 },
+    { id: 'dn7', name: 'فيتامين A+D', unit: 'علبة', category: 'فيتامينات', minAlert: 2 },
+    { id: 'dn8', name: 'مضاد طفيليات', unit: 'علبة', category: 'طفيليات', minAlert: 3 },
+    { id: 'dn9', name: 'أوكسيتتراسيكلين', unit: 'علبة', category: 'مضاد حيوي', minAlert: 2 },
+    { id: 'dn10', name: 'دكساميثازون', unit: 'علبة', category: 'مضاد التهاب', minAlert: 2 },
+    { id: 'dn11', name: 'زنك', unit: 'علبة', category: 'مكملات', minAlert: 2 },
+    { id: 'dn12', name: 'بنسلين', unit: 'علبة', category: 'مضاد حيوي', minAlert: 2 },
+  ];
+  const [drugNames, setDrugNames] = useState(() => {
+    const s = localStorage.getItem('vetDrugNames');
+    return s ? JSON.parse(s) : DEFAULT_DRUG_NAMES;
+  });
+  const [showAddDrugName, setShowAddDrugName] = useState(false);
+  const [editDrugNameId, setEditDrugNameId] = useState(null);
+  const [drugNameForm, setDrugNameForm] = useState({ name: '', unit: 'علبة', category: '', minAlert: 3 });
+
+  // مشتريات الأدوية (كل عملية شراء)
+  const [vetPurchases, setVetPurchases] = useState(() => {
+    const s = localStorage.getItem('vetPurchases');
+    return s ? JSON.parse(s) : [];
+  });
+  const [showAddVetPurchase, setShowAddVetPurchase] = useState(false);
+  const [editVetPurchaseId, setEditVetPurchaseId] = useState(null);
+  const [vetPurchaseForm, setVetPurchaseForm] = useState({
+    drugId: '', date: new Date().toISOString().split('T')[0],
+    qty: '', pricePerUnit: '', expiry: '', notes: ''
+  });
+
+  // سحب من المخزون (الاستخدام)
+  const [showWithdrawMed, setShowWithdrawMed] = useState(false);
+  const [withdrawForm, setWithdrawForm] = useState({
+    drugId: '', qty: 1, date: new Date().toISOString().split('T')[0], notes: ''
+  });
+  const [vetWithdrawals, setVetWithdrawals] = useState(() => {
+    const s = localStorage.getItem('vetWithdrawals');
+    return s ? JSON.parse(s) : [];
+  });
+
+  // إسكات التنبيهات
+  const [silencedMedAlerts, setSilencedMedAlerts] = useState(() => {
+    const s = localStorage.getItem('silencedMedAlerts');
+    return s ? JSON.parse(s) : [];
+  });
+
+  // الأدوية القديمة (للتوافق)
   const [medicines, setMedicines] = useState(() => {
     const saved = localStorage.getItem('vetMedicines');
-    return saved ? JSON.parse(saved) : [
-      { id: 'm1', name: 'تايلوزين', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
-      { id: 'm2', name: 'بي كمبلكس', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
-      { id: 'm3', name: 'أبو ثور (مضاد حيوي)', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
-      { id: 'm4', name: 'علاج الإسهال', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
-      { id: 'm5', name: 'فيتامينات', boxes: 0, expiry: '', cost: 0, unit: 'علبة' },
-      { id: 'm6', name: 'ملح معدني', boxes: 0, expiry: '', cost: 0, unit: 'كيس' },
-    ];
+    return saved ? JSON.parse(saved) : [];
   });
   const [showAddMedicine, setShowAddMedicine] = useState(false);
   const [editMedicineId, setEditMedicineId] = useState(null);
@@ -738,6 +783,104 @@ const App = () => {
   // ===== دوال المكتبة البيطرية =====
 
   // حفظ الأدوية في localStorage + Firebase
+  // ===== دوال نظام الأدوية الجديد =====
+  const saveDrugNames = useCallback((updated) => {
+    setDrugNames(updated);
+    localStorage.setItem('vetDrugNames', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/vetDrugNames`), updated).catch(() => {});
+  }, [user]);
+
+  const saveVetPurchases = useCallback((updated) => {
+    setVetPurchases(updated);
+    localStorage.setItem('vetPurchases', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/vetPurchases`), updated).catch(() => {});
+  }, [user]);
+
+  const saveVetWithdrawals = useCallback((updated) => {
+    setVetWithdrawals(updated);
+    localStorage.setItem('vetWithdrawals', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/vetWithdrawals`), updated).catch(() => {});
+  }, [user]);
+
+  const saveSilencedMedAlerts = useCallback((updated) => {
+    setSilencedMedAlerts(updated);
+    localStorage.setItem('silencedMedAlerts', JSON.stringify(updated));
+    if (user) set(ref(database, `users/${user.id}/silencedMedAlerts`), updated).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    onValue(ref(database, `users/${user.id}/vetDrugNames`), (snap) => { if (snap.exists()) setDrugNames(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/vetPurchases`), (snap) => { if (snap.exists()) setVetPurchases(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/vetWithdrawals`), (snap) => { if (snap.exists()) setVetWithdrawals(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/silencedMedAlerts`), (snap) => { if (snap.exists()) setSilencedMedAlerts(snap.val()); }, { onlyOnce: true });
+  }, [user]);
+
+  // حساب المخزون الفعلي لكل دواء (مشتريات - سحوبات)
+  const vetInventory = useMemo(() => {
+    return drugNames.map(drug => {
+      // كل مشتريات هذا الدواء مرتبة بالتاريخ
+      const purchases = [...vetPurchases.filter(p => p.drugId === drug.id)]
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+      const totalPurchased = purchases.reduce((s, p) => s + (parseFloat(p.qty) || 0), 0);
+      const totalWithdrawn = vetWithdrawals.filter(w => w.drugId === drug.id)
+        .reduce((s, w) => s + (parseFloat(w.qty) || 0), 0);
+      const currentStock = Math.max(0, totalPurchased - totalWithdrawn);
+      const isSilenced = silencedMedAlerts.includes(drug.id);
+      const needsAlert = !isSilenced && currentStock <= (drug.minAlert || 3);
+      const needsCritical = !isSilenced && currentStock < 2;
+      // أقدم الدفعات بتاريخ أقرب انتهاء
+      const activeBatches = purchases.map((p, i) => {
+        const used = i === 0 ? Math.min(totalWithdrawn, parseFloat(p.qty) || 0) : 0;
+        return { ...p, remaining: Math.max(0, (parseFloat(p.qty) || 0) - (i === 0 ? totalWithdrawn : 0)) };
+      }).filter(b => b.remaining > 0);
+      return { ...drug, purchases, totalPurchased, totalWithdrawn, currentStock, needsAlert, needsCritical, activeBatches };
+    });
+  }, [drugNames, vetPurchases, vetWithdrawals, silencedMedAlerts]);
+
+  // تكاليف الأدوية
+  const vetCostStats = useMemo(() => {
+    const now = new Date();
+    const thisMonth = vetPurchases.filter(p => {
+      const d = new Date(p.date);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+    const thisYear = vetPurchases.filter(p => new Date(p.date).getFullYear() === now.getFullYear());
+    const monthlyCost = thisMonth.reduce((s, p) => s + (parseFloat(p.qty) || 0) * (parseFloat(p.pricePerUnit) || 0), 0);
+    const yearlyCost = thisYear.reduce((s, p) => s + (parseFloat(p.qty) || 0) * (parseFloat(p.pricePerUnit) || 0), 0);
+    const totalCost = vetPurchases.reduce((s, p) => s + (parseFloat(p.qty) || 0) * (parseFloat(p.pricePerUnit) || 0), 0);
+    // تكلفة حسب نوع الدواء
+    const byDrug = drugNames.map(drug => {
+      const drugPurchases = vetPurchases.filter(p => p.drugId === drug.id);
+      const total = drugPurchases.reduce((s, p) => s + (parseFloat(p.qty) || 0) * (parseFloat(p.pricePerUnit) || 0), 0);
+      const count = drugPurchases.reduce((s, p) => s + (parseFloat(p.qty) || 0), 0);
+      return { ...drug, total, count };
+    }).filter(d => d.total > 0).sort((a, b) => b.total - a.total);
+    return { monthlyCost, yearlyCost, totalCost, byDrug };
+  }, [vetPurchases, drugNames]);
+
+  const handleSaveVetPurchase = () => {
+    if (!vetPurchaseForm.drugId || !vetPurchaseForm.qty || !vetPurchaseForm.date) { alert('اختر الدواء وأدخل الكمية والتاريخ'); return; }
+    const data = { ...vetPurchaseForm, qty: parseFloat(vetPurchaseForm.qty) || 0, pricePerUnit: parseFloat(vetPurchaseForm.pricePerUnit) || 0 };
+    if (editVetPurchaseId) {
+      saveVetPurchases(vetPurchases.map(p => p.id === editVetPurchaseId ? { ...p, ...data } : p));
+      setEditVetPurchaseId(null);
+    } else {
+      saveVetPurchases([...vetPurchases, { id: `vp_${Date.now()}`, ...data }]);
+    }
+    setVetPurchaseForm({ drugId: '', date: new Date().toISOString().split('T')[0], qty: '', pricePerUnit: '', expiry: '', notes: '' });
+    setShowAddVetPurchase(false);
+  };
+
+  const handleWithdrawMed = () => {
+    if (!withdrawForm.drugId || !withdrawForm.qty) { alert('اختر الدواء وأدخل الكمية'); return; }
+    const inv = vetInventory.find(d => d.drugId === withdrawForm.drugId || d.id === withdrawForm.drugId);
+    if (inv && parseFloat(withdrawForm.qty) > inv.currentStock) { alert(`المخزون الحالي ${inv.currentStock} فقط`); return; }
+    saveVetWithdrawals([...vetWithdrawals, { id: `vw_${Date.now()}`, ...withdrawForm, qty: parseFloat(withdrawForm.qty) || 1 }]);
+    setWithdrawForm({ drugId: '', qty: 1, date: new Date().toISOString().split('T')[0], notes: '' });
+    setShowWithdrawMed(false);
+  };
+
   const saveMedicines = useCallback((updated) => {
     setMedicines(updated);
     localStorage.setItem('vetMedicines', JSON.stringify(updated));
@@ -1666,6 +1809,14 @@ const App = () => {
         alerts.push({ id: `petrol-${pump.id}`, system: '⛽ بنزين المواطير', item: pump.name, msg: `يحتاج تعبئة بنزين — باقي تقريباً ${pump.daysLeft} يوم`, urgency: pump.daysLeft === 0 ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('petrol'); } });
     });
 
+    // 💊 مخزون الأدوية المنخفض
+    vetInventory.forEach(drug => {
+      if (drug.needsCritical)
+        alerts.push({ id: `vetstock-crit-${drug.id}`, system: '💊 مخزون الأدوية', item: drug.name, msg: `مخزون حرج: ${drug.currentStock} ${drug.unit} فقط — اشترِ الآن`, urgency: 'critical', action: () => { setShowAlertsCenter(false); setShowVetLibrary(true); setVetTab('inventory'); } });
+      else if (drug.needsAlert)
+        alerts.push({ id: `vetstock-${drug.id}`, system: '💊 مخزون الأدوية', item: drug.name, msg: `مخزون منخفض: ${drug.currentStock} ${drug.unit} — قارب على النفاد`, urgency: 'high', action: () => { setShowAlertsCenter(false); setShowVetLibrary(true); setVetTab('inventory'); } });
+    });
+
     // 💊 الأدوية — انتهاء صلاحية (بالدفعات)
     medicines.forEach(med => {
       const batches = med.batches || [];
@@ -1720,7 +1871,7 @@ const App = () => {
     // ترتيب: critical أولاً ثم high ثم medium
     const order = { critical: 0, high: 1, medium: 2 };
     return alerts.sort((a, b) => order[a.urgency] - order[b.urgency]);
-  }, [batteries, inverters, panels, pumps, petrolStats, medicines, feedForecast, gasSmartAnalysis, pumpMaintenance, solarMaintenance, farmMaintenance]);
+  }, [batteries, inverters, panels, pumps, petrolStats, vetInventory, medicines, feedForecast, gasSmartAnalysis, pumpMaintenance, solarMaintenance, farmMaintenance]);
 
   const handleSaveCylinder = () => {
     if (!cylinderForm.name) { alert('أدخل اسم الأسطوانة'); return; }
@@ -6032,32 +6183,275 @@ const App = () => {
             <div style={{ background: 'linear-gradient(135deg, #117a65, #0e6655)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '18px' }}>🩺 المكتبة البيطرية</h2>
-                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>مخزون الأدوية · سجل العلاجات · التجارب الناجحة</p>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>المخزون · الأسماء · المشتريات · السجل التاريخي · التكاليف</p>
               </div>
-              {expiringMedicines.length > 0 && (
-                <div style={{ background: '#e74c3c', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>
-                  ⚠️ {expiringMedicines.length} دواء ينتهي قريباً
-                </div>
-              )}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {vetInventory.some(d => d.needsCritical) && <div style={{ background: '#e74c3c', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>🔴 مخزون حرج</div>}
+                {vetInventory.some(d => d.needsAlert && !d.needsCritical) && <div style={{ background: '#e67e22', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold' }}>⚠️ مخزون منخفض</div>}
+              </div>
             </div>
 
             {/* التبويبات */}
-            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f9f9f9' }}>
+            <div style={{ display: 'flex', overflowX: 'auto', borderBottom: '2px solid #eee', background: '#f9f9f9' }}>
               {[
-                { key: 'inventory', label: '💊 المخزون' },
-                { key: 'treatments', label: '📋 سجل العلاجات' },
-                { key: 'experiences', label: '🏆 التجارب الناجحة' },
+                { key: 'inventory', label: '📦 المخزون' },
+                { key: 'drugnames', label: '💊 الأسماء' },
+                { key: 'purchases', label: '🛒 المشتريات' },
+                { key: 'history', label: '📋 السجل التاريخي' },
+                { key: 'costs', label: '💰 التكاليف' },
+                { key: 'treatments', label: '🐑 سجل العلاجات' },
+                { key: 'experiences', label: '🏆 التجارب' },
               ].map(tab => (
-                <button key={tab.key} onClick={() => setVetTab(tab.key)} style={{ flex: 1, padding: '11px 5px', background: vetTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: vetTab === tab.key ? '3px solid #117a65' : '3px solid transparent', cursor: 'pointer', fontWeight: vetTab === tab.key ? 'bold' : 'normal', color: vetTab === tab.key ? '#117a65' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
+                <button key={tab.key} onClick={() => setVetTab(tab.key)} style={{ flex: '0 0 auto', padding: '10px 12px', background: vetTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: vetTab === tab.key ? '3px solid #117a65' : '3px solid transparent', cursor: 'pointer', fontWeight: vetTab === tab.key ? 'bold' : 'normal', color: vetTab === tab.key ? '#117a65' : '#888', fontSize: isMobile ? '11px' : '12px', whiteSpace: 'nowrap' }}>
                   {tab.label}
                 </button>
               ))}
             </div>
 
-            <div style={{ maxHeight: '540px', overflowY: 'auto' }}>
+            <div style={{ maxHeight: '560px', overflowY: 'auto' }}>
 
-              {/* ===== تبويب المخزون ===== */}
+              {/* ===== تبويب المخزون الجديد ===== */}
               {vetTab === 'inventory' && (
+                <div style={{ padding: '15px' }}>
+                  {/* أداة السحب من المخزون */}
+                  {showWithdrawMed ? (
+                    <div style={{ background: '#fff3e0', border: '2px solid #e67e22', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                      <h4 style={{ color: '#e67e22', margin: '0 0 10px' }}>📤 سحب من المخزون (استخدام)</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الدواء</label>
+                          <select value={withdrawForm.drugId} onChange={e => setWithdrawForm(p => ({ ...p, drugId: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="">— اختر —</option>
+                            {vetInventory.filter(d => d.currentStock > 0).map(d => <option key={d.id} value={d.id}>{d.name} ({d.currentStock} {d.unit})</option>)}
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الكمية</label>
+                          <input type="number" min="0.5" step="0.5" value={withdrawForm.qty} onChange={e => setWithdrawForm(p => ({ ...p, qty: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>التاريخ</label>
+                          <input type="date" value={withdrawForm.date} onChange={e => setWithdrawForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} />
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '10px' }}>
+                        <button onClick={handleWithdrawMed} style={{ background: '#e67e22', color: 'white', border: 'none', padding: '9px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ تأكيد السحب</button>
+                        <button onClick={() => setShowWithdrawMed(false)} style={{ background: '#ddd', border: 'none', padding: '9px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowWithdrawMed(true)} style={{ width: '100%', padding: '10px', background: '#e67e22', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>📤 سحب من المخزون (استخدام)</button>
+                  )}
+                  {vetInventory.map(drug => {
+                    const stockColor = drug.needsCritical ? '#e74c3c' : drug.needsAlert ? '#e67e22' : '#27ae60';
+                    const stockBg = drug.needsCritical ? '#fff0f0' : drug.needsAlert ? '#fff8f0' : '#f0fdf5';
+                    return (
+                      <div key={drug.id} style={{ background: stockBg, border: `1.5px solid ${stockColor}30`, borderRadius: '10px', padding: '12px 14px', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              💊 {drug.name}
+                              {drug.category && <span style={{ fontSize: '10px', background: '#e8f5f0', color: '#117a65', padding: '1px 6px', borderRadius: '4px' }}>{drug.category}</span>}
+                              {drug.needsCritical && <span style={{ background: '#e74c3c', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>🔴 حرج</span>}
+                              {drug.needsAlert && !drug.needsCritical && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>⚠️ منخفض</span>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div style={{ textAlign: 'center', background: 'white', borderRadius: '8px', padding: '6px 14px', border: `2px solid ${stockColor}` }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '20px', color: stockColor }}>{drug.currentStock}</div>
+                              <div style={{ fontSize: '10px', color: '#888' }}>{drug.unit}</div>
+                            </div>
+                            {drug.needsAlert && (
+                              <button onClick={() => { const s = [...silencedMedAlerts]; const idx = s.indexOf(drug.id); if (idx >= 0) s.splice(idx,1); else s.push(drug.id); saveSilencedMedAlerts(s); }} style={{ background: '#fef9e7', border: '1px solid #b7950b', color: '#b7950b', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '10px', whiteSpace: 'nowrap' }}>
+                                {silencedMedAlerts.includes(drug.id) ? '🔔 تفعيل' : '🔕 إسكات'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {drug.purchases.length > 0 && (
+                          <div style={{ marginTop: '8px' }}>
+                            <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', fontWeight: 'bold' }}>الدفعات (الأقدم أولاً):</div>
+                            {drug.purchases.map(p => {
+                              const d = p.expiry ? Math.ceil((new Date(p.expiry)-new Date())/86400000) : null;
+                              return (
+                                <div key={p.id} style={{ background: d !== null && d <= 0 ? '#fff0f0' : d !== null && d <= 90 ? '#fff8f0' : '#f9f9f9', borderRadius: '5px', padding: '4px 8px', marginBottom: '2px', fontSize: '11px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px' }}>
+                                  <span><strong>{p.qty} {drug.unit}</strong> — 🛒 {new Date(p.date).toLocaleDateString('en-GB')}{p.pricePerUnit > 0 ? ` — 💰 ${p.pricePerUnit} ر` : ''}</span>
+                                  {p.expiry && <span style={{ color: d !== null && d <= 0 ? '#e74c3c' : d !== null && d <= 90 ? '#e67e22' : '#27ae60', fontWeight: 'bold' }}>📅 {new Date(p.expiry).toLocaleDateString('en-GB')}</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ===== تبويب الأسماء ===== */}
+              {vetTab === 'drugnames' && (
+                <div style={{ padding: '15px' }}>
+                  {showAddDrugName ? (
+                    <div style={{ background: '#f0fdf5', border: '2px solid #117a65', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                      <h4 style={{ color: '#117a65', margin: '0 0 10px' }}>{editDrugNameId ? '✏️ تعديل' : '➕ إضافة دواء'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم الدواء *</label><input value={drugNameForm.name} onChange={e => setDrugNameForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: تايلوزين" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الوحدة</label>
+                          <select value={drugNameForm.unit} onChange={e => setDrugNameForm(p => ({ ...p, unit: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option>علبة</option><option>زجاجة</option><option>كيس</option><option>قارورة</option><option>أمبول</option><option>لتر</option>
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>التصنيف</label><input value={drugNameForm.category} onChange={e => setDrugNameForm(p => ({ ...p, category: e.target.value }))} placeholder="مثال: مضاد حيوي" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>تنبيه عند أقل من</label><input type="number" min="1" value={drugNameForm.minAlert} onChange={e => setDrugNameForm(p => ({ ...p, minAlert: parseInt(e.target.value)||3 }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={() => {
+                          if (!drugNameForm.name) { alert('أدخل الاسم'); return; }
+                          if (editDrugNameId) { saveDrugNames(drugNames.map(d => d.id === editDrugNameId ? { ...d, ...drugNameForm } : d)); setEditDrugNameId(null); }
+                          else saveDrugNames([...drugNames, { id: `dn_${Date.now()}`, ...drugNameForm }]);
+                          setDrugNameForm({ name: '', unit: 'علبة', category: '', minAlert: 3 });
+                          setShowAddDrugName(false);
+                        }} style={{ background: '#117a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={() => { setShowAddDrugName(false); setEditDrugNameId(null); setDrugNameForm({ name: '', unit: 'علبة', category: '', minAlert: 3 }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddDrugName(true)} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '12px' }}>➕ إضافة دواء للقائمة</button>
+                  )}
+                  {drugNames.map(drug => (
+                    <div key={drug.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                      <div>
+                        <div style={{ fontWeight: 'bold', fontSize: '13px' }}>💊 {drug.name}</div>
+                        <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>{drug.unit} · {drug.category || '—'} · تنبيه عند: {drug.minAlert || 3}</div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '5px' }}>
+                        <button onClick={() => { setDrugNameForm({ name: drug.name, unit: drug.unit, category: drug.category||'', minAlert: drug.minAlert||3 }); setEditDrugNameId(drug.id); setShowAddDrugName(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
+                        <button onClick={() => { if (window.confirm('حذف؟')) saveDrugNames(drugNames.filter(d => d.id !== drug.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* ===== تبويب المشتريات ===== */}
+              {vetTab === 'purchases' && (
+                <div style={{ padding: '15px' }}>
+                  {showAddVetPurchase ? (
+                    <div style={{ background: '#f0fdf5', border: '2px solid #117a65', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                      <h4 style={{ color: '#117a65', margin: '0 0 10px' }}>{editVetPurchaseId ? '✏️ تعديل' : '🛒 مشترى جديد'}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الدواء *</label>
+                          <select value={vetPurchaseForm.drugId} onChange={e => setVetPurchaseForm(p => ({ ...p, drugId: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }}>
+                            <option value="">— اختر —</option>
+                            {drugNames.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                          </select>
+                        </div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء *</label><input type="date" value={vetPurchaseForm.date} onChange={e => setVetPurchaseForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>الكمية *</label><input type="number" min="0.5" step="0.5" value={vetPurchaseForm.qty} onChange={e => setVetPurchaseForm(p => ({ ...p, qty: e.target.value }))} placeholder="5" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 سعر الوحدة (ريال)</label><input type="number" min="0" step="0.5" value={vetPurchaseForm.pricePerUnit} onChange={e => setVetPurchaseForm(p => ({ ...p, pricePerUnit: e.target.value }))} placeholder="25" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الانتهاء</label><input type="date" value={vetPurchaseForm.expiry} onChange={e => setVetPurchaseForm(p => ({ ...p, expiry: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                        <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={vetPurchaseForm.notes} onChange={e => setVetPurchaseForm(p => ({ ...p, notes: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
+                      </div>
+                      {vetPurchaseForm.qty && vetPurchaseForm.pricePerUnit && (
+                        <div style={{ background: '#d5f5e3', borderRadius: '7px', padding: '7px 12px', marginTop: '8px', fontSize: '13px', color: '#27ae60', fontWeight: 'bold' }}>
+                          💵 الإجمالي: {(parseFloat(vetPurchaseForm.qty)*parseFloat(vetPurchaseForm.pricePerUnit)).toFixed(2)} ريال
+                        </div>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                        <button onClick={handleSaveVetPurchase} style={{ background: '#117a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ وتحديث المخزون</button>
+                        <button onClick={() => { setShowAddVetPurchase(false); setEditVetPurchaseId(null); setVetPurchaseForm({ drugId:'', date: new Date().toISOString().split('T')[0], qty:'', pricePerUnit:'', expiry:'', notes:'' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddVetPurchase(true)} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '12px' }}>🛒 مشترى جديد</button>
+                  )}
+                  {[...vetPurchases].sort((a,b) => new Date(b.date)-new Date(a.date)).map(p => {
+                    const drug = drugNames.find(d => d.id === p.drugId);
+                    return (
+                      <div key={p.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px' }}>
+                        <div>
+                          <div style={{ fontWeight: 'bold', fontSize: '13px' }}>💊 {drug?.name || 'غير معروف'}</div>
+                          <div style={{ fontSize: '11px', color: '#888', marginTop: '2px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                            <span>📅 {new Date(p.date).toLocaleDateString('en-GB')}</span>
+                            <span style={{ fontWeight: 'bold', color: '#117a65' }}>{p.qty} {drug?.unit}</span>
+                            {p.pricePerUnit > 0 && <span style={{ color: '#27ae60' }}>💰 {p.pricePerUnit} ر → {(p.qty*p.pricePerUnit).toFixed(0)} ر</span>}
+                            {p.expiry && <span>تنتهي: {new Date(p.expiry).toLocaleDateString('en-GB')}</span>}
+                          </div>
+                          {p.notes && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>📝 {p.notes}</div>}
+                        </div>
+                        <div style={{ display: 'flex', gap: '5px' }}>
+                          <button onClick={() => { setVetPurchaseForm({ drugId: p.drugId, date: p.date, qty: p.qty, pricePerUnit: p.pricePerUnit||'', expiry: p.expiry||'', notes: p.notes||'' }); setEditVetPurchaseId(p.id); setShowAddVetPurchase(true); }} style={{ background: '#f0f9f6', border: '1px solid #117a65', color: '#117a65', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
+                          <button onClick={() => { if (window.confirm('حذف؟')) saveVetPurchases(vetPurchases.filter(x => x.id !== p.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {vetPurchases.length === 0 && <div style={{ textAlign: 'center', padding: '25px', color: '#bbb', fontSize: '13px' }}>لا توجد مشتريات بعد</div>}
+                </div>
+              )}
+
+              {/* ===== تبويب السجل التاريخي ===== */}
+              {vetTab === 'history' && (
+                <div style={{ padding: '15px' }}>
+                  <div style={{ background: '#f0f4ff', borderRadius: '8px', padding: '10px 14px', marginBottom: '12px', fontSize: '12px', color: '#2471a3' }}>📋 سجل كامل بجميع المشتريات والسحوبات</div>
+                  {[
+                    ...vetPurchases.map(p => ({ ...p, _type: 'purchase' })),
+                    ...vetWithdrawals.map(w => ({ ...w, _type: 'withdrawal' })),
+                  ].sort((a,b) => new Date(b.date)-new Date(a.date)).map(item => {
+                    const drug = drugNames.find(d => d.id === item.drugId);
+                    const isPurchase = item._type === 'purchase';
+                    return (
+                      <div key={item.id} style={{ background: isPurchase ? '#f0fdf5' : '#fff8f0', border: `1px solid ${isPurchase ? '#a9dfbf' : '#f0c27f'}`, borderRadius: '8px', padding: '10px 13px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px' }}>
+                        <div>
+                          <div style={{ fontWeight: 'bold', fontSize: '13px', color: isPurchase ? '#117a65' : '#e67e22' }}>
+                            {isPurchase ? '🛒 شراء' : '📤 سحب'} — {drug?.name || '?'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#666', marginTop: '2px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                            <span>📅 {new Date(item.date).toLocaleDateString('en-GB')}</span>
+                            <span style={{ fontWeight: 'bold' }}>{item.qty} {drug?.unit}</span>
+                            {isPurchase && item.pricePerUnit > 0 && <span style={{ color: '#27ae60' }}>💰 {item.pricePerUnit} ر — إجمالي: {(item.qty*item.pricePerUnit).toFixed(0)} ر</span>}
+                            {isPurchase && item.expiry && <span>تنتهي: {new Date(item.expiry).toLocaleDateString('en-GB')}</span>}
+                          </div>
+                          {item.notes && <div style={{ fontSize: '11px', color: '#aaa', marginTop: '2px' }}>📝 {item.notes}</div>}
+                        </div>
+                        <button onClick={() => { if (!window.confirm('حذف؟')) return; if (isPurchase) saveVetPurchases(vetPurchases.filter(x => x.id !== item.id)); else saveVetWithdrawals(vetWithdrawals.filter(x => x.id !== item.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                      </div>
+                    );
+                  })}
+                  {vetPurchases.length === 0 && vetWithdrawals.length === 0 && <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px' }}>📋</div><div>لا توجد سجلات</div></div>}
+                </div>
+              )}
+
+              {/* ===== تبويب التكاليف ===== */}
+              {vetTab === 'costs' && (
+                <div style={{ padding: '15px' }}>
+                  <div style={{ background: 'linear-gradient(135deg, #117a65, #0e6655)', borderRadius: '10px', padding: '15px', marginBottom: '14px', color: 'white' }}>
+                    <div style={{ fontSize: '12px', opacity: 0.9, marginBottom: '10px' }}>💰 تكاليف الأدوية البيطرية</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', textAlign: 'center' }}>
+                      {[{ label: 'هذا الشهر', val: vetCostStats.monthlyCost.toFixed(0)+' ر' }, { label: 'هذه السنة', val: vetCostStats.yearlyCost.toFixed(0)+' ر' }, { label: 'الكلي', val: vetCostStats.totalCost.toFixed(0)+' ر' }].map(s => (
+                        <div key={s.label} style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '8px', padding: '10px' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{s.val}</div>
+                          <div style={{ fontSize: '10px', opacity: 0.85 }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {vetCostStats.byDrug.map(drug => {
+                    const pct = vetCostStats.totalCost > 0 ? Math.round((drug.total/vetCostStats.totalCost)*100) : 0;
+                    return (
+                      <div key={drug.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', marginBottom: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                          <span style={{ fontWeight: 'bold', fontSize: '13px' }}>💊 {drug.name}</span>
+                          <span style={{ fontWeight: 'bold', color: '#117a65' }}>{drug.total.toFixed(0)} ر ({pct}%)</span>
+                        </div>
+                        <div style={{ height: '6px', background: '#eee', borderRadius: '3px' }}><div style={{ height: '100%', width: `${pct}%`, background: '#117a65', borderRadius: '3px' }} /></div>
+                        <div style={{ fontSize: '11px', color: '#888', marginTop: '3px' }}>{drug.count} {drug.unit} مشتراة</div>
+                      </div>
+                    );
+                  })}
+                  {vetCostStats.byDrug.length === 0 && <div style={{ textAlign: 'center', padding: '20px', color: '#bbb', fontSize: '12px' }}>سجّل مشتريات لتظهر التكاليف</div>}
+                </div>
+              )}
+
+              {/* ===== التبويبات القديمة (سجل العلاجات + التجارب) ===== */}
+              {vetTab === 'oldinventory_skip' && (
                 <div style={{ padding: '15px 20px' }}>
                   {/* ملخص */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '10px', marginBottom: '15px' }}>
@@ -6822,5 +7216,3 @@ const App = () => {
 };
 
 export default App;
-
-    
