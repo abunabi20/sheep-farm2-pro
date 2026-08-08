@@ -1802,10 +1802,16 @@ const App = () => {
         alerts.push({ id: `pump-oil-${pump.id}`, system: '🛢️ زيت المواطير', item: pump.name, msg: oil.daysLeft <= 0 ? `متأخر ${Math.abs(oil.daysLeft)} يوم عن تغيير الزيت!` : `موعد تغيير الزيت خلال ${oil.daysLeft} يوم`, urgency: oil.daysLeft <= 0 ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('oil'); setSelectedPumpId(pump.id); } });
     });
 
-    // ⛽ بنزين المواطير
+    // ⛽ بنزين المواطير — تنبيه عند 8 أيام
     petrolStats.forEach(pump => {
-      if (pump.needsAlert)
-        alerts.push({ id: `petrol-${pump.id}`, system: '⛽ بنزين المواطير', item: pump.name, msg: `يحتاج تعبئة بنزين — باقي تقريباً ${pump.daysLeft} يوم`, urgency: pump.daysLeft === 0 ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('petrol'); } });
+      if (pump.needsAlert || (pump.daysLeft !== null && pump.daysLeft <= 8))
+        alerts.push({ id: `petrol-${pump.id}`, system: '⛽ بنزين المواطير', item: pump.name, msg: `يحتاج تعبئة بنزين — باقي تقريباً ${pump.daysLeft} يوم`, urgency: pump.daysLeft === 0 ? 'critical' : pump.daysLeft <= 3 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowPumpSystem(true); setPumpTab('petrol'); } });
+    });
+
+    // 🌾 تنبيه نفاذ علف بناء على التوقع الذكي (7 أيام)
+    smartConsumption.forEach(feed => {
+      if (feed.daysUntilNext !== null && feed.daysUntilNext <= 7 && feed.avgDailyBags)
+        alerts.push({ id: `smartfeed-${feed.id}`, system: '🌾 نفاذ علف — توقع ذكي', item: feed.name, msg: feed.daysUntilNext === 0 ? 'نفد العلف المتوقع — اشترِ الآن!' : `متوقع النفاد خلال ${feed.daysUntilNext} يوم`, urgency: feed.daysUntilNext === 0 ? 'critical' : feed.daysUntilNext <= 3 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowFeedSystem(true); setFeedTab('smart'); } });
     });
 
     // 💊 مخزون الأدوية المنخفض
@@ -1870,7 +1876,7 @@ const App = () => {
     // ترتيب: critical أولاً ثم high ثم medium
     const order = { critical: 0, high: 1, medium: 2 };
     return alerts.sort((a, b) => order[a.urgency] - order[b.urgency]);
-  }, [batteries, inverters, panels, pumps, petrolStats, vetInventory, medicines, feedForecast, gasSmartAnalysis, pumpMaintenance, solarMaintenance, farmMaintenance]);
+  }, [batteries, inverters, panels, pumps, petrolStats, vetInventory, medicines, feedForecast, smartConsumption, gasSmartAnalysis, pumpMaintenance, solarMaintenance, farmMaintenance]);
 
   const handleSaveCylinder = () => {
     if (!cylinderForm.name) { alert('أدخل اسم الأسطوانة'); return; }
@@ -3777,25 +3783,56 @@ const App = () => {
                   {foodRecords.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '30px', color: '#bbb' }}><div style={{ fontSize: '36px', marginBottom: '8px' }}>🛒</div><div>لا توجد سجلات زاد بعد</div></div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {[...foodRecords].sort((a,b) => new Date(b.date)-new Date(a.date)).map(rec => {
-                        const typeLabels = { weekly: '📅 أسبوعي', biweekly: '📅 نصف شهري', monthly: '🗓️ شهري', special: '🎉 مناسبة', other: '📌 أخرى' };
-                        return (
-                          <div key={rec.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-                            <div style={{ fontSize: '13px' }}>
-                              <span style={{ fontWeight: 'bold', color: '#784212' }}>{typeLabels[rec.type] || typeLabels[rec.mealType] || '🛒 زاد'}</span>
-                              <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>📅 {new Date(rec.date).toLocaleDateString('en-GB')}</span>
-                              {rec.notes && <span style={{ color: '#aaa', fontSize: '11px', marginRight: '6px' }}>— {rec.notes}</span>}
+                    <>
+                      {/* تجميع حسب الشهر */}
+                      {(() => {
+                        const sorted = [...foodRecords].sort((a,b) => new Date(b.date)-new Date(a.date));
+                        const byMonth = {};
+                        sorted.forEach(rec => {
+                          const d = new Date(rec.date);
+                          const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                          if (!byMonth[key]) byMonth[key] = [];
+                          byMonth[key].push(rec);
+                        });
+                        return Object.entries(byMonth).map(([monthKey, recs]) => {
+                          const monthTotal = recs.reduce((s, r) => s + (r.total||0), 0);
+                          const [year, month] = monthKey.split('-');
+                          const monthName = new Date(parseInt(year), parseInt(month)-1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+                          const typeLabels = { weekly: '📅 أسبوعي', biweekly: '📅 نصف شهري', monthly: '🗓️ شهري', special: '🎉 مناسبة', other: '📌 أخرى' };
+                          return (
+                            <div key={monthKey} style={{ marginBottom: '14px' }}>
+                              {/* رأس الشهر */}
+                              <div style={{ background: '#784212', color: 'white', borderRadius: '8px 8px 0 0', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontWeight: 'bold', fontSize: '13px' }}>📅 {monthName}</span>
+                                <span style={{ fontSize: '12px', opacity: 0.9 }}>{recs.length} بكج</span>
+                              </div>
+                              {/* بنود الشهر */}
+                              <div style={{ border: '1px solid #e8d5b0', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
+                                {recs.map((rec, idx) => (
+                                  <div key={rec.id} style={{ background: idx % 2 === 0 ? 'white' : '#fdf8f5', padding: '9px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', borderTop: idx > 0 ? '1px solid #f0e8dc' : 'none' }}>
+                                    <div style={{ fontSize: '13px' }}>
+                                      <span style={{ fontWeight: 'bold', color: '#784212' }}>{typeLabels[rec.type] || typeLabels[rec.mealType] || '🛒 زاد'}</span>
+                                      <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>📅 {new Date(rec.date).toLocaleDateString('en-GB')}</span>
+                                      {rec.notes && <span style={{ color: '#aaa', fontSize: '11px', marginRight: '6px' }}>— {rec.notes}</span>}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                      <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '13px' }}>{rec.total.toLocaleString()} ر</span>
+                                      <button onClick={() => { setFoodForm({ date: rec.date, type: rec.type || rec.mealType || 'weekly', totalCost: String(rec.total), notes: rec.notes || '' }); setEditFoodId(rec.id); setShowAddFood(true); }} style={{ background: '#f0f9f6', border: '1px solid #784212', color: '#784212', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                                      <button onClick={() => { if (window.confirm('حذف؟')) saveFoodRecords(foodRecords.filter(f => f.id !== rec.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                                    </div>
+                                  </div>
+                                ))}
+                                {/* مجموع الشهر */}
+                                <div style={{ background: '#fdf0e0', padding: '9px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e8d5b0' }}>
+                                  <span style={{ fontSize: '12px', color: '#784212', fontWeight: 'bold' }}>🗓️ مجموع {monthName}</span>
+                                  <span style={{ fontWeight: 'bold', color: '#784212', fontSize: '15px' }}>{monthTotal.toLocaleString()} ريال</span>
+                                </div>
+                              </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '14px' }}>{rec.total.toLocaleString()} ر</span>
-                              <button onClick={() => { setFoodForm({ date: rec.date, type: rec.type || rec.mealType || 'weekly', totalCost: String(rec.total), notes: rec.notes || '' }); setEditFoodId(rec.id); setShowAddFood(true); }} style={{ background: '#f0f9f6', border: '1px solid #784212', color: '#784212', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
-                              <button onClick={() => { if (window.confirm('حذف؟')) saveFoodRecords(foodRecords.filter(f => f.id !== rec.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        });
+                      })()}
+                    </>
                   )}
                 </div>
               )}
@@ -5063,28 +5100,50 @@ const App = () => {
                         </div>
                       </div>
 
-                      {/* قائمة المشتريات */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {[...feedPurchases].sort((a, b) => new Date(b.date) - new Date(a.date)).map(p => (
-                          <div key={p.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', padding: '10px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-                            <div>
-                              <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010' }}>🌾 {p.feedName}</div>
-                              <div style={{ fontSize: '12px', color: '#888', marginTop: '3px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                <span>📅 {new Date(p.date).toLocaleDateString('en-GB')}</span>
-                                <span>📦 {p.qty} {feeds.find(f => f.id === p.feedId)?.unit || ''}</span>
-                                <span>💰 {p.pricePerUnit} ر/وحدة</span>
-                                {p.remainingFromPrev > 0 && <span style={{ color: '#b7950b' }}>📦 متبقي: {p.remainingFromPrev}</span>}
-                                {p.notes && <span>📝 {p.notes}</span>}
+                      {/* قائمة المشتريات مجمّعة حسب التاريخ */}
+                      {(() => {
+                        const sorted = [...feedPurchases].sort((a, b) => new Date(b.date) - new Date(a.date));
+                        const byDate = {};
+                        sorted.forEach(p => { if (!byDate[p.date]) byDate[p.date] = []; byDate[p.date].push(p); });
+                        return Object.entries(byDate).map(([date, items]) => {
+                          const dayTotal = items.reduce((s, p) => s + p.totalCost, 0);
+                          return (
+                            <div key={date} style={{ marginBottom: '12px' }}>
+                              {/* رأس اليوم */}
+                              <div style={{ background: '#6e4b1f', color: 'white', borderRadius: '8px 8px 0 0', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontWeight: 'bold', fontSize: '13px' }}>📅 {new Date(date).toLocaleDateString('en-GB')}</span>
+                                <span style={{ fontSize: '12px', opacity: 0.9 }}>{items.length} صنف</span>
+                              </div>
+                              {/* بنود اليوم */}
+                              <div style={{ border: '1px solid #e8d5b0', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
+                                {items.map((p, idx) => (
+                                  <div key={p.id} style={{ background: idx % 2 === 0 ? 'white' : '#fdf8f5', padding: '9px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', borderTop: idx > 0 ? '1px solid #f0e8dc' : 'none' }}>
+                                    <div style={{ flex: 1 }}>
+                                      <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010' }}>🌾 {p.feedName}</span>
+                                      <div style={{ fontSize: '11px', color: '#888', marginTop: '2px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                        <span>📦 {p.qty} {feeds.find(f => f.id === p.feedId)?.unit || ''}</span>
+                                        <span>💰 {p.pricePerUnit} ر/وحدة</span>
+                                        {p.remainingFromPrev > 0 && <span style={{ color: '#b7950b' }}>متبقي: {p.remainingFromPrev}</span>}
+                                        {p.notes && <span>📝 {p.notes}</span>}
+                                      </div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                      <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '13px' }}>{p.totalCost.toLocaleString()} ر</span>
+                                      <button onClick={() => { setPurchaseForm({ feedId: p.feedId, date: p.date, qty: String(p.qty), pricePerUnit: String(p.pricePerUnit), notes: p.notes||'', remainingFromPrev: String(p.remainingFromPrev||'') }); setEditPurchaseId(p.id); setShowAddPurchase(true); }} style={{ background: '#f0f9f6', border: '1px solid #27ae60', color: '#27ae60', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                                      <button onClick={() => { if (window.confirm('حذف؟')) { const feed = feeds.find(f => f.id === p.feedId); if (feed) saveFeeds(feeds.map(f => f.id === p.feedId ? { ...f, stock: Math.max(0, (parseFloat(f.stock)||0) - p.qty) } : f)); saveFeedPurchases(feedPurchases.filter(x => x.id !== p.id)); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
+                                    </div>
+                                  </div>
+                                ))}
+                                {/* مجموع اليوم */}
+                                <div style={{ background: '#faf3e8', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e8d5b0' }}>
+                                  <span style={{ fontSize: '12px', color: '#6e4b1f', fontWeight: 'bold' }}>مجموع يوم {new Date(date).toLocaleDateString('en-GB')}</span>
+                                  <span style={{ fontWeight: 'bold', color: '#6e4b1f', fontSize: '14px' }}>{dayTotal.toLocaleString()} ريال</span>
+                                </div>
                               </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '14px' }}>{p.totalCost.toLocaleString()} ر</span>
-                              <button onClick={() => { setPurchaseForm({ feedId: p.feedId, date: p.date, qty: String(p.qty), pricePerUnit: String(p.pricePerUnit), notes: p.notes||'', remainingFromPrev: String(p.remainingFromPrev||'') }); setEditPurchaseId(p.id); setShowAddPurchase(true); }} style={{ background: '#f0f9f6', border: '1px solid #27ae60', color: '#27ae60', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>✏️</button>
-                              <button onClick={() => { if (window.confirm('حذف هذا الشراء؟ سيتم خصم الكمية من المخزون')) { const feed = feeds.find(f => f.id === p.feedId); if (feed) saveFeeds(feeds.map(f => f.id === p.feedId ? { ...f, stock: Math.max(0, (parseFloat(f.stock) || 0) - p.qty) } : f)); saveFeedPurchases(feedPurchases.filter(x => x.id !== p.id)); } }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                          );
+                        });
+                      })()}
                     </>
                   )}
                 </div>
