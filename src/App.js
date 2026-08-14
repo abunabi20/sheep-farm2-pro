@@ -5350,6 +5350,28 @@ const App = () => {
                               </span>
                             </div>
 
+                            {/* مقارنة المخزون الفعلي */}
+                            <div style={{ background: '#f0f4ff', borderRadius: '8px', padding: '10px 13px', marginBottom: '10px', border: '1px solid #c5cae9', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '12px', color: '#2471a3', fontWeight: 'bold', whiteSpace: 'nowrap' }}>📦 المتبقي الفعلي الآن:</span>
+                              <input
+                                type="number" min="0" step="0.5"
+                                placeholder={`أدخل العدد الفعلي (${feed.unit})`}
+                                id={`actual-stock-${feed.id}`}
+                                style={{ flex: 1, minWidth: '120px', padding: '7px 10px', border: '2px solid #c5cae9', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', textAlign: 'center' }}
+                                onChange={e => {
+                                  const val = parseFloat(e.target.value);
+                                  const diff = val - feed.currentStock;
+                                  const el = document.getElementById(`stock-diff-${feed.id}`);
+                                  if (el && !isNaN(val)) {
+                                    el.textContent = diff > 0 ? `+${diff.toFixed(1)} أكثر من المتوقع` : diff < 0 ? `${diff.toFixed(1)} أقل من المتوقع` : 'مطابق للتوقع ✅';
+                                    el.style.color = diff > 0 ? '#27ae60' : diff < 0 ? '#e74c3c' : '#27ae60';
+                                  }
+                                }}
+                              />
+                              <span style={{ fontSize: '12px', color: '#888' }}>{feed.unit}</span>
+                              <span id={`stock-diff-${feed.id}`} style={{ fontSize: '12px', fontWeight: 'bold', minWidth: '140px' }}></span>
+                            </div>
+
                             {/* إحصائيات */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '7px', marginBottom: '10px' }}>
                               <div style={{ background: '#faf3e8', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
