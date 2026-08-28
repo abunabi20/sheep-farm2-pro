@@ -1844,12 +1844,18 @@ const App = () => {
         alerts.push({ id: `feed-${feed.id}`, system: '🌾 الأعلاف', item: feed.name, msg: feed.daysLeft !== null ? `يكفي ${feed.daysLeft} يوم فقط — المخزون منخفض` : 'المخزون صفر!', urgency: feed.daysLeft === 0 || feed.daysLeft === null ? 'critical' : feed.daysLeft <= 7 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowFeedSystem(true); setFeedTab('forecast'); } });
     });
 
-    // 🔵 الغاز — تنبيه أسبوعين مبكر + تنبيه تسريب
+    // 🔵 الغاز — تنبيه نفاذ + توقع ذكي
     gasSmartAnalysis.forEach(cyl => {
       if (cyl.leakAlert)
         alerts.push({ id: `gas-leak-${cyl.id}`, system: '🔵 الغاز — تسريب محتمل!', item: cyl.name, msg: `⚠️ الغاز انتهى أبكر من المعدل بأكثر من 30% — تحقق من التسريبات`, urgency: 'critical', action: () => { setShowAlertsCenter(false); setShowGasSystem(true); setGasTab('smart'); } });
-      else if (cyl.alertSoon && cyl.smartDaysLeft !== null)
-        alerts.push({ id: `gas-${cyl.id}`, system: '🔵 الغاز', item: cyl.name, msg: cyl.smartDaysLeft === 0 ? 'حان وقت التعبئة!' : `باقي ${cyl.smartDaysLeft} يوم للتعبئة (التاريخ المتوقع: ${cyl.smartNextDate ? new Date(cyl.smartNextDate).toLocaleDateString('en-SA') : ''})`, urgency: cyl.smartDaysLeft <= 3 ? 'critical' : 'high', action: () => { setShowAlertsCenter(false); setShowGasSystem(true); setGasTab('smart'); } });
+      else if (cyl.smartDaysLeft !== null && cyl.smartDaysLeft <= 10)
+        alerts.push({ id: `gas-${cyl.id}`, system: '🔵 الغاز — توقع ذكي', item: cyl.name, msg: cyl.smartDaysLeft === 0 ? '⛽ حان وقت التعبئة الآن!' : `باقي تقريباً ${cyl.smartDaysLeft} يوم على النفاذ — التاريخ المتوقع: ${cyl.smartNextDate ? new Date(cyl.smartNextDate).toLocaleDateString('en-GB') : ''}`, urgency: cyl.smartDaysLeft <= 2 ? 'critical' : cyl.smartDaysLeft <= 5 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowGasSystem(true); setGasTab('smart'); } });
+      else if (!cyl.smartDaysLeft && cyl.lastRefillDate) {
+        // أسطوانة عبّأناها مرة واحدة فقط — بلّغ إذا مضى على آخر تعبئة أكثر من 20 يوم
+        const daysSince = Math.floor((new Date() - new Date(cyl.lastRefillDate)) / 86400000);
+        if (daysSince >= 20)
+          alerts.push({ id: `gas-old-${cyl.id}`, system: '🔵 الغاز', item: cyl.name, msg: `مضى ${daysSince} يوم على آخر تعبئة — تحقق من الكمية المتبقية`, urgency: daysSince >= 30 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowGasSystem(true); setGasTab('cylinders'); } });
+      }
     });
 
     // 🔧 صيانة المواطير القادمة
@@ -3265,135 +3271,121 @@ const App = () => {
 
       {/* ===== Modal التنبيهات المركزية ===== */}
       {showAlertsCenter && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1100, padding: '15px', overflowY: 'auto' }} onClick={() => setShowAlertsCenter(false)}>
-          <div style={{ background: 'white', borderRadius: '14px', maxWidth: '720px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 15px 50px rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1100, padding: '12px', overflowY: 'auto' }} onClick={() => setShowAlertsCenter(false)}>
+          <div style={{ background: '#f4f6f9', borderRadius: '16px', maxWidth: '740px', width: '100%', marginTop: '12px', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
 
-            {/* Header */}
-            <div style={{ background: 'linear-gradient(135deg, #922b21, #c0392b)', padding: '18px 22px', color: 'white' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            {/* ===== Header ===== */}
+            <div style={{ background: 'linear-gradient(135deg, #1a1a2e, #16213e)', padding: '20px 22px', color: 'white' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: '19px' }}>🚨 لوحة التنبيهات المركزية</h2>
-                  <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.9 }}>جميع التنبيهات من كل الأنظمة في مكان واحد</p>
+                  <h2 style={{ margin: 0, fontSize: '18px', letterSpacing: '0.5px' }}>🚨 لوحة التنبيهات</h2>
+                  <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.7 }}>اضغط على أي تنبيه للانتقال مباشرة</p>
                 </div>
-                <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '8px 14px' }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '22px' }}>{allAlerts.length}</div>
-                  <div style={{ fontSize: '11px', opacity: 0.85 }}>تنبيه</div>
+                <div style={{ textAlign: 'center', background: allAlerts.length > 0 ? '#e74c3c' : '#27ae60', borderRadius: '12px', padding: '10px 18px' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '24px', lineHeight: 1 }}>{allAlerts.length}</div>
+                  <div style={{ fontSize: '10px', opacity: 0.9, marginTop: '2px' }}>تنبيه</div>
                 </div>
               </div>
 
-              {/* إحصائيات سريعة */}
-              {allAlerts.length > 0 && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginTop: '14px' }}>
+              {/* شريط الملخص السريع */}
+              {allAlerts.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
                   {[
-                    { label: '🔴 حرجة', val: allAlerts.filter(a => a.urgency === 'critical').length, bg: 'rgba(255,255,255,0.25)' },
-                    { label: '🟠 عالية', val: allAlerts.filter(a => a.urgency === 'high').length, bg: 'rgba(255,255,255,0.15)' },
-                    { label: '🟡 متوسطة', val: allAlerts.filter(a => a.urgency === 'medium').length, bg: 'rgba(255,255,255,0.1)' },
+                    { label: 'حرجة', count: allAlerts.filter(a => a.urgency === 'critical').length, color: '#e74c3c', bg: 'rgba(231,76,60,0.25)', icon: '🔴' },
+                    { label: 'عالية', count: allAlerts.filter(a => a.urgency === 'high').length, color: '#e67e22', bg: 'rgba(230,126,34,0.2)', icon: '🟠' },
+                    { label: 'متوسطة', count: allAlerts.filter(a => a.urgency === 'medium').length, color: '#f1c40f', bg: 'rgba(241,196,15,0.15)', icon: '🟡' },
                   ].map(s => (
-                    <div key={s.label} style={{ background: s.bg, borderRadius: '8px', padding: '7px', textAlign: 'center' }}>
-                      <div style={{ fontWeight: 'bold', fontSize: '18px' }}>{s.val}</div>
-                      <div style={{ fontSize: '11px', opacity: 0.85 }}>{s.label}</div>
+                    <div key={s.label} style={{ background: s.bg, border: `1px solid ${s.color}50`, borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '22px', fontWeight: 'bold', color: s.color, lineHeight: 1 }}>{s.count}</div>
+                      <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.75)', marginTop: '3px' }}>{s.icon} {s.label}</div>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-
-            {/* المحتوى */}
-            <div style={{ maxHeight: '560px', overflowY: 'auto', padding: '15px 20px' }}>
-              {allAlerts.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '50px 20px' }}>
-                  <div style={{ fontSize: '60px', marginBottom: '15px' }}>✅</div>
-                  <div style={{ fontWeight: 'bold', fontSize: '18px', color: '#27ae60', marginBottom: '8px' }}>لا توجد تنبيهات!</div>
-                  <div style={{ color: '#888', fontSize: '13px' }}>كل الأنظمة تعمل بشكل طبيعي</div>
-                </div>
               ) : (
-                <div>
-                  {/* التنبيهات الحرجة */}
-                  {allAlerts.filter(a => a.urgency === 'critical').length > 0 && (
-                    <div style={{ marginBottom: '20px' }}>
-                      <div style={{ background: '#922b21', color: 'white', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        🔴 تنبيهات حرجة — تتطلب تدخلاً فورياً
-                        <span style={{ background: 'white', color: '#922b21', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{allAlerts.filter(a=>a.urgency==='critical').length}</span>
-                      </div>
-                      {allAlerts.filter(a => a.urgency === 'critical').map(alert => (
-                        <div key={alert.id} onClick={alert.action} style={{ background: '#fff5f5', border: '2px solid #e74c3c', borderRadius: '10px', padding: '13px 15px', marginBottom: '8px', cursor: 'pointer', transition: 'all 0.2s' }}
-                          onMouseEnter={e => e.currentTarget.style.background = '#ffe8e8'}
-                          onMouseLeave={e => e.currentTarget.style.background = '#fff5f5'}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: '11px', color: '#e74c3c', fontWeight: 'bold', marginBottom: '3px' }}>{alert.system}</div>
-                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a' }}>{alert.item}</div>
-                              <div style={{ fontSize: '13px', color: '#c0392b', marginTop: '3px', fontWeight: 'bold' }}>{alert.msg}</div>
-                            </div>
-                            <div style={{ background: '#e74c3c', color: 'white', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>اذهب ←</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* التنبيهات العالية */}
-                  {allAlerts.filter(a => a.urgency === 'high').length > 0 && (
-                    <div style={{ marginBottom: '20px' }}>
-                      <div style={{ background: '#ca6f1e', color: 'white', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        🟠 تنبيهات عالية — تحتاج متابعة قريبة
-                        <span style={{ background: 'white', color: '#ca6f1e', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{allAlerts.filter(a=>a.urgency==='high').length}</span>
-                      </div>
-                      {allAlerts.filter(a => a.urgency === 'high').map(alert => (
-                        <div key={alert.id} onClick={alert.action} style={{ background: '#fffbf0', border: '1.5px solid #e67e22', borderRadius: '10px', padding: '12px 15px', marginBottom: '8px', cursor: 'pointer' }}
-                          onMouseEnter={e => e.currentTarget.style.background = '#fef0d3'}
-                          onMouseLeave={e => e.currentTarget.style.background = '#fffbf0'}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: '11px', color: '#e67e22', fontWeight: 'bold', marginBottom: '3px' }}>{alert.system}</div>
-                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a' }}>{alert.item}</div>
-                              <div style={{ fontSize: '13px', color: '#ca6f1e', marginTop: '3px' }}>{alert.msg}</div>
-                            </div>
-                            <div style={{ background: '#e67e22', color: 'white', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>اذهب ←</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* التنبيهات المتوسطة */}
-                  {allAlerts.filter(a => a.urgency === 'medium').length > 0 && (
-                    <div>
-                      <div style={{ background: '#b7950b', color: 'white', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        🟡 تنبيهات متوسطة — للمتابعة
-                        <span style={{ background: 'white', color: '#b7950b', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{allAlerts.filter(a=>a.urgency==='medium').length}</span>
-                      </div>
-                      {allAlerts.filter(a => a.urgency === 'medium').map(alert => (
-                        <div key={alert.id} onClick={alert.action} style={{ background: '#fefdf0', border: '1px solid #f0e68c', borderRadius: '10px', padding: '12px 15px', marginBottom: '8px', cursor: 'pointer' }}
-                          onMouseEnter={e => e.currentTarget.style.background = '#faf8e0'}
-                          onMouseLeave={e => e.currentTarget.style.background = '#fefdf0'}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: '11px', color: '#b7950b', fontWeight: 'bold', marginBottom: '3px' }}>{alert.system}</div>
-                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1a1a1a' }}>{alert.item}</div>
-                              <div style={{ fontSize: '13px', color: '#b7950b', marginTop: '3px' }}>{alert.msg}</div>
-                            </div>
-                            <div style={{ background: '#b7950b', color: 'white', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>اذهب ←</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div style={{ background: 'rgba(39,174,96,0.2)', border: '1px solid rgba(39,174,96,0.4)', borderRadius: '10px', padding: '12px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '14px', color: '#2ecc71', fontWeight: 'bold' }}>✅ كل الأنظمة تعمل بشكل طبيعي</span>
                 </div>
               )}
             </div>
 
-            <div style={{ padding: '13px 20px', borderTop: '1px solid #eee', display: 'flex', gap: '10px' }}>
-              <div style={{ flex: 1, fontSize: '12px', color: '#888', display: 'flex', alignItems: 'center' }}>
-                💡 اضغط على أي تنبيه للانتقال مباشرة إلى النظام
-              </div>
-              <button onClick={() => setShowAlertsCenter(false)} style={{ background: '#c0392b', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>إغلاق</button>
+            {/* ===== المحتوى ===== */}
+            <div style={{ maxHeight: '62vh', overflowY: 'auto', padding: '14px' }}>
+              {allAlerts.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+                  <div style={{ fontSize: '64px', marginBottom: '14px' }}>✅</div>
+                  <div style={{ fontWeight: 'bold', fontSize: '18px', color: '#27ae60', marginBottom: '6px' }}>لا توجد تنبيهات</div>
+                  <div style={{ color: '#999', fontSize: '13px' }}>كل شيء تحت السيطرة</div>
+                </div>
+              ) : (() => {
+                // تجميع التنبيهات حسب النظام
+                const grouped = {};
+                allAlerts.forEach(alert => {
+                  if (!grouped[alert.system]) grouped[alert.system] = [];
+                  grouped[alert.system].push(alert);
+                });
+
+                // ترتيب المجموعات: الأشد خطورة أولاً
+                const urgencyOrder = { critical: 0, high: 1, medium: 2 };
+                const sortedGroups = Object.entries(grouped).sort(([, aAlerts], [, bAlerts]) => {
+                  const aMin = Math.min(...aAlerts.map(a => urgencyOrder[a.urgency]));
+                  const bMin = Math.min(...bAlerts.map(a => urgencyOrder[a.urgency]));
+                  return aMin - bMin;
+                });
+
+                const urgencyConfig = {
+                  critical: { border: '#e74c3c', bg: '#fff5f5', badge: '#e74c3c', badgeTxt: 'white', label: '🔴 حرج', btnBg: '#e74c3c' },
+                  high:     { border: '#e67e22', bg: '#fffaf5', badge: '#e67e22', badgeTxt: 'white', label: '🟠 عالي', btnBg: '#e67e22' },
+                  medium:   { border: '#f39c12', bg: '#fffdf0', badge: '#f39c12', badgeTxt: 'white', label: '🟡 متوسط', btnBg: '#b7950b' },
+                };
+
+                return sortedGroups.map(([system, sysAlerts]) => {
+                  const topUrgency = sysAlerts.reduce((best, a) => urgencyOrder[a.urgency] < urgencyOrder[best] ? a.urgency : best, sysAlerts[0].urgency);
+                  const cfg = urgencyConfig[topUrgency];
+                  return (
+                    <div key={system} style={{ marginBottom: '10px', background: 'white', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', border: `1.5px solid ${cfg.border}30` }}>
+                      {/* رأس النظام */}
+                      <div style={{ background: `${cfg.border}12`, borderBottom: `1px solid ${cfg.border}25`, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#1a1a1a' }}>{system}</span>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <span style={{ background: cfg.badge, color: cfg.badgeTxt, fontSize: '10px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px' }}>{sysAlerts.length} تنبيه</span>
+                        </div>
+                      </div>
+                      {/* تنبيهات النظام */}
+                      <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                        {sysAlerts.map(alert => {
+                          const c = urgencyConfig[alert.urgency];
+                          return (
+                            <div key={alert.id} onClick={alert.action} style={{ background: c.bg, border: `1px solid ${c.border}40`, borderRadius: '8px', padding: '10px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', transition: 'all 0.15s' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = `${c.border}18`; e.currentTarget.style.borderColor = c.border; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = c.bg; e.currentTarget.style.borderColor = `${c.border}40`; }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '3px', flexWrap: 'wrap' }}>
+                                  <span style={{ background: c.badge, color: c.badgeTxt, fontSize: '9px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '6px' }}>{c.label}</span>
+                                  <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#1a1a1a' }}>{alert.item}</span>
+                                </div>
+                                <div style={{ fontSize: '12px', color: '#555', lineHeight: '1.4' }}>{alert.msg}</div>
+                              </div>
+                              <div style={{ background: c.btnBg, color: 'white', borderRadius: '7px', padding: '5px 11px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>انتقل ←</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '12px 16px', borderTop: '1px solid #e0e0e0', background: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '11px', color: '#aaa' }}>📌 التنبيهات مرتبة حسب الأهمية ومجمّعة حسب النظام</span>
+              <button onClick={() => setShowAlertsCenter(false)} style={{ background: '#2c3e50', color: 'white', border: 'none', padding: '9px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>إغلاق</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ===== Modal صيانة المزرعة ===== */}
+            {/* ===== Modal صيانة المزرعة ===== */}
       {showFarmMaintSystem && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', zIndex: 1000, padding: '15px', overflowY: 'auto' }} onClick={() => setShowFarmMaintSystem(false)}>
           <div style={{ background: 'white', borderRadius: '14px', maxWidth: '720px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
