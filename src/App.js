@@ -1,11 +1,24 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 
 // CSS للموبايل
 const mobileCSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { font-family: 'Segoe UI', Arial, sans-serif; direction: rtl; }
+  html, body { font-family: 'Tajawal', 'Segoe UI', Arial, sans-serif; direction: rtl; background: #f2f6f3; -webkit-font-smoothing: antialiased; }
+  button, input, select, textarea { font-family: inherit; }
+  button { transition: transform .12s ease, filter .15s ease, box-shadow .15s ease; }
+  button:hover { filter: brightness(1.06); }
+  button:active { transform: scale(0.97); }
+  input:focus, select:focus, textarea:focus { outline: 2px solid #2c7a65; outline-offset: 0; border-color: #2c7a65 !important; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #b7cbc2; border-radius: 8px; }
+  table tbody tr:hover { filter: brightness(0.97); }
+  @keyframes fhPop { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
+  div[style*="position: fixed"] > div { animation: fhPop .2s ease-out; }
+  .fh-nav { transition: background .15s ease; }
+  .fh-nav:hover { background: rgba(255,255,255,0.12) !important; }
 `;
 
 const useIsMobile = () => {
@@ -67,7 +80,1499 @@ const EMPTY_FORM = {
   status: 'active', notes: '', offspringCount: 0, healthStatus: 'healthy', healthNotes: '',
   purchasePrice: '', purchaseDate: '',
   saleDate: '', salePrice: '', slaughterDate: '', slaughterType: 'regular',
-  slaughterLocation: '', slaughterNotes: '', deathDate: ''
+  slaughterLocation: '', slaughterNotes: '', deathDate: '', deathCause: '',
+  tagColor: '', tagNo: '', barn: '', motherNumber: ''
+};
+
+// ============================================================
+// ===== FarmHub Pro v2 : الأدوات المشتركة والتصميم الجديد =====
+// ============================================================
+
+// ألوان التصميم الجديد (أخضر هادئ + ذهبي ناعم)
+const T = {
+  dark: '#14352c', mid: '#1d4a3d', primary: '#2c7a65', soft: '#eef5f1', bg: '#f2f6f3',
+  gold: '#e9b949', text: '#1f2a26', muted: '#6b7b74', border: '#dbe7e0',
+  red: '#d9534f', amber: '#e8a33d', blue: '#3b82a0', purple: '#7b5ea7'
+};
+
+const cardStyle = {
+  background: 'white', borderRadius: '14px', border: '1px solid #e3ece7',
+  boxShadow: '0 1px 3px rgba(20,53,44,0.07)'
+};
+
+const inputStyle = {
+  padding: '9px 11px', border: '1px solid #cfdcd5', borderRadius: '8px',
+  width: '100%', fontSize: '14px', background: 'white', color: '#1f2a26'
+};
+
+const btnStyle = (bg, color) => ({
+  background: bg || T.primary, color: color || 'white', border: 'none',
+  padding: '9px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px'
+});
+
+// أوامر التواريخ (كلها ميلادية)
+const pd = (s) => {
+  if (!s) return null;
+  const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const toISO = (d) => {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+};
+
+const todayStart = () => {
+  const t = new Date();
+  t.setHours(0, 0, 0, 0);
+  return t;
+};
+
+const addMonthsTo = (d, m) => {
+  const r = new Date(d);
+  const day = r.getDate();
+  r.setMonth(r.getMonth() + m);
+  if (r.getDate() !== day) r.setDate(0);
+  return r;
+};
+
+const daysBetween = (a, b) => Math.round((b.getTime() - a.getTime()) / 86400000);
+
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-GB') : '-');
+
+// عمر الحيوان في تاريخ معين (أشهر + أيام)
+const ageParts = (birthStr, atDate) => {
+  const b = pd(birthStr);
+  if (!b) return null;
+  let months = (atDate.getFullYear() - b.getFullYear()) * 12 + (atDate.getMonth() - b.getMonth());
+  let anchor = addMonthsTo(b, months);
+  if (anchor > atDate) { months -= 1; anchor = addMonthsTo(b, months); }
+  return { months: Math.max(months, 0), days: Math.max(daysBetween(anchor, atDate), 0), totalDays: daysBetween(b, atDate) };
+};
+
+const ageText = (p) => {
+  if (!p) return '-';
+  if (p.totalDays < 0) return 'لم يولد بعد';
+  const y = Math.floor(p.months / 12);
+  const m = p.months % 12;
+  const parts = [];
+  if (y > 0) parts.push(`${y} سنة`);
+  if (m > 0) parts.push(`${m} شهر`);
+  if (p.days > 0 || parts.length === 0) parts.push(`${p.days} يوم`);
+  return parts.join(' و ');
+};
+
+// موعد عيد الأضحى القادم (تقويم أم القرى) مع قيمة احتياطية
+const computeNextEid = () => {
+  const today = todayStart();
+  try {
+    const fmt = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', { day: 'numeric', month: 'numeric', year: 'numeric' });
+    for (let i = 0; i < 420; i++) {
+      const d = new Date(today.getTime() + i * 86400000);
+      const parts = fmt.formatToParts(d);
+      const day = parseInt(parts.find(p => p.type === 'day').value, 10);
+      const mon = parseInt(parts.find(p => p.type === 'month').value, 10);
+      if (mon === 12 && day === 10) return d;
+    }
+  } catch (err) {
+    // نستخدم القائمة الاحتياطية
+  }
+  const fallback = ['2027-05-16', '2028-05-05', '2029-04-24', '2030-04-14', '2031-04-03'];
+  const found = fallback.map(pd).find(d => d >= today);
+  return found || pd('2027-05-16');
+};
+
+const toArr = (v) => (Array.isArray(v) ? v : Object.values(v || {}));
+
+const getEidDate = (settings) => (settings && settings.eidDate ? pd(settings.eidDate) : null) || computeNextEid();
+
+const hijriText = (d) => {
+  try {
+    return new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura-nu-latn', { day: 'numeric', month: 'long', year: 'numeric' }).format(d);
+  } catch (err) {
+    return '';
+  }
+};
+
+// إعدادات افتراضية (تحفظ في Firebase وتتزامن بين الأجهزة)
+const TAG_PRESETS = [
+  { name: 'أحمر', hex: '#D9453B' }, { name: 'أزرق', hex: '#2F6FB5' }, { name: 'أخضر', hex: '#2E9E5B' },
+  { name: 'برتقالي', hex: '#EE8A2B' }, { name: 'أسود', hex: '#222222' }, { name: 'وردي', hex: '#E87DA8' },
+  { name: 'بنفسجي', hex: '#7B5EA7' }, { name: 'سماوي', hex: '#3BB4C8' }, { name: 'بني', hex: '#8B5A2B' }
+];
+
+const DEFAULT_SETTINGS = {
+  tagColors: [
+    { id: 'yellow', name: 'أصفر', hex: '#F2C230', species: 'sheep', from: 1, to: 200 },
+    { id: 'white', name: 'أبيض', hex: '#FFFFFF', species: 'goat', from: 1, to: 100 }
+  ],
+  barns: [],
+  udhiyahMonths: { sheep: 6, goat: 12, other: 12 },
+  eidDate: ''
+};
+
+const SPECIES_LABEL = { sheep: '🐑 ضان (نعيمي)', goat: '🐐 ماعز' };
+const typeLabel = (t) => SPECIES_LABEL[t] || `🐄 ${t}`;
+
+const isActiveAnimal = (a) => a.status !== 'sold' && a.status !== 'slaughtered' && a.status !== 'dead';
+
+const flattenAnimals = (animals) => {
+  const out = [];
+  Object.entries(animals || {}).forEach(([type, group]) => {
+    if (group && typeof group === 'object') {
+      Object.entries(group).forEach(([id, data]) => out.push({ id, type, ...data }));
+    }
+  });
+  return out;
+};
+
+const statusText = (s) => {
+  if (s === 'active' || s === 'productive' || !s) return '✓ نشط';
+  if (s === 'sold') return '💰 مباع';
+  if (s === 'dead') return '☠️ نافق';
+  return '🔪 مذبوح';
+};
+
+const udhiyahMonthsFor = (settings, type) => {
+  const m = (settings && settings.udhiyahMonths) || DEFAULT_SETTINGS.udhiyahMonths;
+  const v = m[type] != null ? m[type] : m.other;
+  return parseInt(v, 10) || 6;
+};
+
+// أهلية الأضحية لحيوان واحد
+const udhiyahInfo = (a, eid, settings) => {
+  const b = pd(a.birthDate);
+  if (!b) return null;
+  const months = udhiyahMonthsFor(settings, a.type);
+  const eligibleDate = addMonthsTo(b, months);
+  const eligible = eligibleDate <= eid;
+  return {
+    months, eligibleDate, eligible,
+    ageAtEid: ageParts(a.birthDate, eid),
+    shortDays: eligible ? 0 : daysBetween(eid, eligibleDate)
+  };
+};
+
+const hexLight = (hex) => {
+  const h = (hex || '#ffffff').replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16) || 0;
+  const g = parseInt(h.substring(2, 4), 16) || 0;
+  const b = parseInt(h.substring(4, 6), 16) || 0;
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 170;
+};
+
+const findTagColor = (colors, id) => (colors || []).find(c => c.id === id) || null;
+
+const defaultTagColorFor = (colors, type) => (colors || []).find(c => c.species === type) || null;
+
+const downloadCSV = (name, rows) => {
+  const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const csv = '﻿' + rows.map(r => r.map(esc).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+// ===== هوك المزامنة الفورية بين الأجهزة =====
+const useFarmData = (userId, key, initial) => {
+  const initRef = useRef(initial);
+  const [val, setVal] = useState(() => {
+    try {
+      const s = localStorage.getItem(`fh2_${key}`);
+      return s ? JSON.parse(s) : initial;
+    } catch (err) {
+      return initial;
+    }
+  });
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    const unsub = onValue(ref(database, `users/${userId}/${key}`), (snap) => {
+      const v = snap.exists() ? snap.val() : initRef.current;
+      setVal(v);
+      try { localStorage.setItem(`fh2_${key}`, JSON.stringify(v)); } catch (err) { /* تجاهل */ }
+    });
+    return () => unsub();
+  }, [userId, key]);
+
+  const save = useCallback((next) => {
+    setVal(next);
+    try { localStorage.setItem(`fh2_${key}`, JSON.stringify(next)); } catch (err) { /* تجاهل */ }
+    if (userId) set(ref(database, `users/${userId}/${key}`), next).catch(() => {});
+  }, [userId, key]);
+
+  return [val, save];
+};
+
+// ===== مكونات واجهة مشتركة =====
+const PageShell = ({ title, icon, subtitle, onClose, children, accent }) => (
+  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: T.bg, zIndex: 1200, overflowY: 'auto', direction: 'rtl' }}>
+    <div style={{ position: 'sticky', top: 0, zIndex: 5, background: `linear-gradient(135deg, ${T.dark}, ${accent || T.mid})`, color: 'white', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 2px 12px rgba(0,0,0,0.25)' }}>
+      <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', width: '38px', height: '38px', borderRadius: '10px', cursor: 'pointer', fontSize: '18px', flexShrink: 0 }}>→</button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: '18px' }}>{icon} {title}</div>
+        {subtitle && <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '2px' }}>{subtitle}</div>}
+      </div>
+    </div>
+    <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '16px 14px 40px' }}>{children}</div>
+  </div>
+);
+
+const Tabs = ({ tabs, value, onChange }) => (
+  <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '6px', marginBottom: '14px' }}>
+    {tabs.map(t => (
+      <button key={t.key} onClick={() => onChange(t.key)} style={{ flexShrink: 0, padding: '9px 15px', borderRadius: '22px', border: value === t.key ? `2px solid ${T.primary}` : '2px solid transparent', background: value === t.key ? T.primary : 'white', color: value === t.key ? 'white' : T.text, fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+        {t.label}
+      </button>
+    ))}
+  </div>
+);
+
+const Stat = ({ label, value, color, sub, icon, onClick }) => (
+  <div onClick={onClick} style={{ ...cardStyle, padding: '14px', textAlign: 'center', cursor: onClick ? 'pointer' : 'default', borderTop: `4px solid ${color || T.primary}` }}>
+    <div style={{ fontSize: '12px', color: T.muted, marginBottom: '4px' }}>{icon} {label}</div>
+    <div style={{ fontSize: '26px', fontWeight: 800, color: color || T.primary, lineHeight: 1.1 }}>{value}</div>
+    {sub && <div style={{ fontSize: '11px', color: T.muted, marginTop: '4px' }}>{sub}</div>}
+  </div>
+);
+
+const Bar = ({ value, max, color, height }) => (
+  <div style={{ background: '#e8efeb', borderRadius: '8px', height: `${height || 10}px`, overflow: 'hidden' }}>
+    <div style={{ width: `${max > 0 ? Math.min(100, (value / max) * 100) : 0}%`, background: color || T.primary, height: '100%', borderRadius: '8px', transition: 'width .4s' }} />
+  </div>
+);
+
+const SectionTitle = ({ children, action }) => (
+  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '18px 0 10px' }}>
+    <h3 style={{ margin: 0, fontSize: '16px', color: T.dark, fontWeight: 800 }}>{children}</h3>
+    {action}
+  </div>
+);
+
+const Empty = ({ text }) => (
+  <div style={{ ...cardStyle, padding: '30px', textAlign: 'center', color: T.muted, fontSize: '13px' }}>{text}</div>
+);
+
+// شارة الوسم (دائرة بلون الوسم ورقمه)
+const TagChip = ({ color, no, size }) => {
+  if (!color || (no === '' || no == null)) return null;
+  const s = size || 30;
+  const light = hexLight(color.hex);
+  return (
+    <span title={`${color.name} ${no}`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: `${s}px`, height: `${s}px`, padding: '0 6px', borderRadius: '50%', background: color.hex, color: light ? '#222' : 'white', border: light ? '2px solid #b9c5be' : '2px solid rgba(0,0,0,0.15)', fontWeight: 800, fontSize: `${Math.round(s * 0.42)}px`, boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>
+      {no}
+    </span>
+  );
+};
+
+// ============================================================
+// ===== لوحة القيادة الرئيسية =====
+// ============================================================
+const HomeDashboard = ({ animals, settings, allAlerts, tasks, smartConsumption, userName, onNav, onAddAnimal }) => {
+  const all = useMemo(() => flattenAnimals(animals), [animals]);
+  const active = useMemo(() => all.filter(isActiveAnimal), [all]);
+  const today = todayStart();
+  const eid = useMemo(() => getEidDate(settings), [settings]);
+  const eidDays = daysBetween(today, eid);
+
+  const stats = useMemo(() => {
+    const t = todayStart();
+    const females = active.filter(a => a.gender === 'female').length;
+    const males = active.filter(a => a.gender === 'male').length;
+    const sick = active.filter(a => a.healthStatus === 'sick').length;
+    const untagged = active.filter(a => a.tagNo === undefined || a.tagNo === '' || a.tagNo === null).length;
+    let births90 = 0;
+    all.forEach(a => {
+      Object.values(a.births || {}).forEach(b => {
+        const bd = pd(b.date);
+        if (bd && daysBetween(bd, t) >= 0 && daysBetween(bd, t) <= 90) births90 += parseInt(b.count, 10) || 0;
+      });
+    });
+    const yearStart = new Date(t.getFullYear(), 0, 1);
+    const soldYear = all.filter(a => a.status === 'sold' && pd(a.saleDate) && pd(a.saleDate) >= yearStart);
+    const revenueYear = soldYear.reduce((s, a) => s + (parseFloat(a.salePrice) || 0), 0);
+    return { females, males, sick, untagged, births90, soldYear: soldYear.length, revenueYear };
+  }, [active, all]);
+
+  const ageBuckets = useMemo(() => {
+    const t = todayStart();
+    const b = [
+      { label: 'حملان (أقل من 6 أشهر)', n: 0, color: '#e9b949' },
+      { label: '6 إلى 12 شهر', n: 0, color: '#8cc084' },
+      { label: 'سنة إلى 3 سنوات', n: 0, color: '#2c7a65' },
+      { label: '3 إلى 5 سنوات', n: 0, color: '#3b82a0' },
+      { label: 'أكثر من 5 سنوات (عويد)', n: 0, color: '#7b5ea7' }
+    ];
+    active.forEach(a => {
+      const p = ageParts(a.birthDate, t);
+      if (!p) return;
+      if (p.months < 6) b[0].n++;
+      else if (p.months < 12) b[1].n++;
+      else if (p.months < 36) b[2].n++;
+      else if (p.months < 60) b[3].n++;
+      else b[4].n++;
+    });
+    return b;
+  }, [active]);
+
+  const eidStats = useMemo(() => {
+    let ok = 0; let no = 0;
+    active.forEach(a => {
+      const info = udhiyahInfo(a, eid, settings);
+      if (!info) return;
+      if (info.eligible) ok++; else no++;
+    });
+    return { ok, no };
+  }, [active, eid, settings]);
+
+  const byType = useMemo(() => Object.keys(animals || {}).map(type => {
+    const list = active.filter(a => a.type === type);
+    const tagged = list.filter(a => a.tagNo !== undefined && a.tagNo !== '' && a.tagNo !== null).length;
+    return { type, total: list.length, females: list.filter(a => a.gender === 'female').length, males: list.filter(a => a.gender === 'male').length, tagged };
+  }), [animals, active]);
+
+  const order = { critical: 0, high: 1, medium: 2 };
+  const topAlerts = [...allAlerts].sort((a, b) => (order[a.urgency] ?? 3) - (order[b.urgency] ?? 3)).slice(0, 5);
+  const countU = (u) => allAlerts.filter(a => a.urgency === u).length;
+
+  const upcomingTasks = useMemo(() => (tasks || [])
+    .filter(tk => tk.active !== false && tk.due)
+    .sort((a, b) => String(a.due).localeCompare(String(b.due)))
+    .slice(0, 5), [tasks]);
+
+  const lowFeeds = useMemo(() => (smartConsumption || [])
+    .filter(f => f && f.daysUntilNext !== null && f.daysUntilNext !== undefined)
+    .sort((a, b) => a.daysUntilNext - b.daysUntilNext)
+    .slice(0, 3), [smartConsumption]);
+
+  const hour = new Date().getHours();
+  const greet = hour < 5 ? 'مساء الخير' : hour < 12 ? 'صباح الخير' : hour < 18 ? 'نهارك سعيد' : 'مساء الخير';
+  const maxAge = Math.max(1, ...ageBuckets.map(x => x.n));
+  const urgencyColor = { critical: T.red, high: '#e67e22', medium: '#d4a017' };
+
+  return (
+    <div style={{ direction: 'rtl' }}>
+      {/* الترحيب */}
+      <div style={{ background: `linear-gradient(135deg, ${T.dark}, ${T.primary})`, borderRadius: '18px', padding: '20px', color: 'white', marginBottom: '14px', position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', left: '-20px', top: '-30px', fontSize: '130px', opacity: 0.08 }}>🐑</div>
+        <div style={{ fontSize: '13px', opacity: 0.85 }}>{greet}</div>
+        <div style={{ fontSize: '24px', fontWeight: 800, marginTop: '2px' }}>{userName || 'مربّي الغنم'}</div>
+        <div style={{ fontSize: '12px', opacity: 0.85, marginTop: '8px', display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+          <span>📅 {today.toLocaleDateString('en-GB')}</span>
+          {hijriText(today) && <span>🌙 {hijriText(today)}</span>}
+          <span>🟢 متزامن مباشرة بين الأجهزة</span>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '14px' }}>
+          <button onClick={onAddAnimal} style={{ ...btnStyle(T.gold, T.dark), padding: '9px 14px' }}>➕ إضافة حيوان</button>
+          <button onClick={() => onNav('alerts')} style={{ ...btnStyle('rgba(255,255,255,0.18)'), padding: '9px 14px' }}>🚨 التنبيهات ({allAlerts.length})</button>
+          <button onClick={() => onNav('tasks')} style={{ ...btnStyle('rgba(255,255,255,0.18)'), padding: '9px 14px' }}>📅 المهام</button>
+          <button onClick={() => onNav('tags')} style={{ ...btnStyle('rgba(255,255,255,0.18)'), padding: '9px 14px' }}>🏷️ الأوسمة</button>
+        </div>
+      </div>
+
+      {/* مؤشرات سريعة */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+        <Stat icon="🐑" label="الرؤوس النشطة" value={active.length} color={T.primary} sub={`${stats.females} أنثى · ${stats.males} ذكر`} onClick={() => onNav('herd')} />
+        <Stat icon="🍼" label="مواليد آخر 90 يوم" value={stats.births90} color="#2e9e5b" onClick={() => onNav('reports')} />
+        <Stat icon="⚠️" label="مريضة" value={stats.sick} color={stats.sick > 0 ? T.red : T.muted} />
+        <Stat icon="🏷️" label="بدون وسم" value={stats.untagged} color={stats.untagged > 0 ? '#d4a017' : T.primary} sub="اضغط للترقيم" onClick={() => onNav('tags')} />
+        <Stat icon="💰" label={`مبيعات ${today.getFullYear()}`} value={stats.revenueYear.toLocaleString('en-US')} color={T.blue} sub={`${stats.soldYear} رأس`} onClick={() => onNav('sales')} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '14px' }}>
+        {/* بطاقة العيد */}
+        <div onClick={() => onNav('udhiyah')} style={{ ...cardStyle, padding: '18px', cursor: 'pointer', background: 'linear-gradient(135deg, #fff8e1, #fff)', borderColor: '#f1dc9a' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontWeight: 800, color: T.dark, fontSize: '15px' }}>🕌 عيد الأضحى</div>
+            <div style={{ fontSize: '12px', color: T.muted }}>{fmtDate(eid)}</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '10px 0' }}>
+            <span style={{ fontSize: '42px', fontWeight: 800, color: '#b7791f', lineHeight: 1 }}>{eidDays > 0 ? eidDays : 0}</span>
+            <span style={{ fontSize: '14px', color: T.muted }}>يوم متبقي</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            <div style={{ background: '#e6f4ea', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#1e7a46' }}>{eidStats.ok}</div>
+              <div style={{ fontSize: '11px', color: '#1e7a46' }}>يضحي يوم العيد</div>
+            </div>
+            <div style={{ background: '#fdecea', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#b3382f' }}>{eidStats.no}</div>
+              <div style={{ fontSize: '11px', color: '#b3382f' }}>لا يضحي (صغير)</div>
+            </div>
+          </div>
+        </div>
+
+        {/* التنبيهات */}
+        <div style={{ ...cardStyle, padding: '18px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <div style={{ fontWeight: 800, color: T.dark, fontSize: '15px' }}>🚨 التنبيهات</div>
+            <button onClick={() => onNav('alerts')} style={{ ...btnStyle(T.soft, T.primary), padding: '6px 12px', fontSize: '12px' }}>عرض الكل</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', marginBottom: '10px' }}>
+            {[['حرجة', 'critical', T.red], ['عالية', 'high', '#e67e22'], ['متوسطة', 'medium', '#d4a017']].map(([l, k, c]) => (
+              <div key={k} style={{ background: `${c}18`, borderRadius: '10px', padding: '8px', textAlign: 'center' }}>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: c }}>{countU(k)}</div>
+                <div style={{ fontSize: '11px', color: c }}>{l}</div>
+              </div>
+            ))}
+          </div>
+          {topAlerts.length === 0 ? (
+            <div style={{ textAlign: 'center', color: '#2e9e5b', fontWeight: 'bold', padding: '10px', fontSize: '13px' }}>✅ كل شيء تحت السيطرة</div>
+          ) : topAlerts.map(al => (
+            <div key={al.id} onClick={al.action} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '8px 4px', borderTop: '1px solid #eef2ef', cursor: 'pointer' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: urgencyColor[al.urgency] || T.muted, marginTop: '6px', flexShrink: 0 }} />
+              <div style={{ fontSize: '12px', lineHeight: 1.5 }}>
+                <b>{al.item}</b> <span style={{ color: T.muted }}>({al.system})</span>
+                <div style={{ color: '#555' }}>{al.msg}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* توزيع الأنواع */}
+        <div style={{ ...cardStyle, padding: '18px' }}>
+          <div style={{ fontWeight: 800, color: T.dark, fontSize: '15px', marginBottom: '12px' }}>🐑 القطيع حسب النوع</div>
+          {byType.length === 0 && <div style={{ color: T.muted, fontSize: '13px' }}>لا توجد بيانات</div>}
+          {byType.map(t => {
+            const col = defaultTagColorFor(settings.tagColors, t.type);
+            return (
+              <div key={t.type} style={{ marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', marginBottom: '4px' }}>
+                  <span style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {col && <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: col.hex, border: '1.5px solid #9aa9a1', display: 'inline-block' }} />}
+                    {typeLabel(t.type)}
+                  </span>
+                  <span style={{ color: T.muted }}>{t.total} رأس · {t.females} أنثى · {t.males} ذكر</span>
+                </div>
+                <Bar value={t.tagged} max={Math.max(t.total, 1)} color={col ? col.hex : T.primary} height={9} />
+                <div style={{ fontSize: '11px', color: T.muted, marginTop: '3px' }}>الموسوم بأرقام: {t.tagged} من {t.total}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* الأعمار */}
+        <div style={{ ...cardStyle, padding: '18px' }}>
+          <div style={{ fontWeight: 800, color: T.dark, fontSize: '15px', marginBottom: '12px' }}>📊 الفئات العمرية</div>
+          {ageBuckets.map(b => (
+            <div key={b.label} style={{ marginBottom: '9px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '3px' }}>
+                <span>{b.label}</span><b>{b.n}</b>
+              </div>
+              <Bar value={b.n} max={maxAge} color={b.color} height={8} />
+            </div>
+          ))}
+        </div>
+
+        {/* المهام */}
+        <div style={{ ...cardStyle, padding: '18px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <div style={{ fontWeight: 800, color: T.dark, fontSize: '15px' }}>📅 المهام القادمة</div>
+            <button onClick={() => onNav('tasks')} style={{ ...btnStyle(T.soft, T.primary), padding: '6px 12px', fontSize: '12px' }}>إدارة</button>
+          </div>
+          {upcomingTasks.length === 0 && <div style={{ color: T.muted, fontSize: '13px' }}>لا توجد مهام. أضف تطعيمات وتذكيرات من صفحة المهام.</div>}
+          {upcomingTasks.map(tk => {
+            const d = daysBetween(today, pd(tk.due) || today);
+            return (
+              <div key={tk.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', padding: '8px 0', borderTop: '1px solid #eef2ef', fontSize: '13px' }}>
+                <span>{tk.title}</span>
+                <b style={{ color: d < 0 ? T.red : d <= 3 ? '#e67e22' : T.primary, whiteSpace: 'nowrap' }}>{d < 0 ? `متأخر ${-d} يوم` : d === 0 ? 'اليوم' : `بعد ${d} يوم`}</b>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* الأعلاف */}
+        <div style={{ ...cardStyle, padding: '18px' }}>
+          <div style={{ fontWeight: 800, color: T.dark, fontSize: '15px', marginBottom: '10px' }}>🌾 أقرب نفاذ للأعلاف</div>
+          {lowFeeds.length === 0 && <div style={{ color: T.muted, fontSize: '13px' }}>لا توجد بيانات كافية بعد</div>}
+          {lowFeeds.map(f => (
+            <div key={f.id || f.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid #eef2ef', fontSize: '13px' }}>
+              <span>{f.name || f.feedName}</span>
+              <b style={{ color: f.daysUntilNext <= 7 ? T.red : f.daysUntilNext <= 14 ? '#e67e22' : T.primary }}>{f.daysUntilNext <= 0 ? 'نفد' : `${f.daysUntilNext} يوم`}</b>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+// ===== سجل الأوسمة: الأرقام والألوان =====
+// ============================================================
+const TagRegistryPage = ({ animals, settings, saveSettings, onSaveAnimal, onClose }) => {
+  const colors = settings.tagColors || [];
+  const [tab, setTab] = useState('map');
+  const [colorId, setColorId] = useState(colors[0] ? colors[0].id : '');
+  const [picked, setPicked] = useState(null);
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [draft, setDraft] = useState({});
+  const [newColor, setNewColor] = useState({ name: '', hex: '#D9453B', species: '', from: 1, to: 100 });
+
+  const all = useMemo(() => flattenAnimals(animals), [animals]);
+  const color = findTagColor(colors, colorId) || colors[0] || null;
+
+  const holders = useMemo(() => {
+    const m = {};
+    if (!color) return m;
+    all.forEach(a => {
+      if (a.tagColor === color.id && a.tagNo !== undefined && a.tagNo !== '' && a.tagNo !== null) {
+        const key = String(a.tagNo);
+        if (!m[key] || isActiveAnimal(a)) m[key] = a;
+      }
+    });
+    return m;
+  }, [all, color]);
+
+  const usedCount = Object.values(holders).filter(isActiveAnimal).length;
+  const total = color ? Math.max(0, (parseInt(color.to, 10) || 0) - (parseInt(color.from, 10) || 1) + 1) : 0;
+  const freeNumbers = useMemo(() => {
+    if (!color) return [];
+    const out = [];
+    for (let i = parseInt(color.from, 10) || 1; i <= (parseInt(color.to, 10) || 0); i++) {
+      const h = holders[String(i)];
+      if (!h || !isActiveAnimal(h)) out.push(i);
+    }
+    return out;
+  }, [color, holders]);
+
+  const untagged = useMemo(() => all
+    .filter(a => isActiveAnimal(a) && (a.tagNo === undefined || a.tagNo === '' || a.tagNo === null))
+    .filter(a => typeFilter === 'all' || a.type === typeFilter)
+    .sort((a, b) => (parseInt(a.number, 10) || 0) - (parseInt(b.number, 10) || 0)), [all, typeFilter]);
+
+  const assign = (a, colObj, no) => {
+    if (!colObj || no === '' || no === undefined) { alert('اختر رقماً'); return; }
+    const clash = all.find(x => x.id !== a.id && isActiveAnimal(x) && x.tagColor === colObj.id && String(x.tagNo) === String(no));
+    if (clash) { alert(`الرقم ${no} (${colObj.name}) مستخدم لدى الحيوان رقم ${clash.number}`); return; }
+    const data = { ...a, tagColor: colObj.id, tagNo: String(no) };
+    const type = a.type;
+    const id = a.id;
+    delete data.id;
+    delete data.type;
+    onSaveAnimal(type, id, data);
+  };
+
+  const autoAssign = () => {
+    if (untagged.length === 0) return;
+    if (!window.confirm(`سيتم ترقيم ${untagged.length} حيوان تلقائياً بالتسلسل حسب لون كل نوع. هل تريد المتابعة؟`)) return;
+    const taken = {};
+    all.forEach(a => {
+      if (isActiveAnimal(a) && a.tagColor && a.tagNo !== undefined && a.tagNo !== '' && a.tagNo !== null) taken[`${a.tagColor}_${a.tagNo}`] = true;
+    });
+    let done = 0;
+    untagged.forEach(a => {
+      const col = defaultTagColorFor(colors, a.type);
+      if (!col) return;
+      for (let i = parseInt(col.from, 10) || 1; i <= (parseInt(col.to, 10) || 0); i++) {
+        if (!taken[`${col.id}_${i}`]) {
+          taken[`${col.id}_${i}`] = true;
+          const data = { ...a, tagColor: col.id, tagNo: String(i) };
+          const type = a.type; const id = a.id;
+          delete data.id; delete data.type;
+          onSaveAnimal(type, id, data);
+          done++;
+          break;
+        }
+      }
+    });
+    alert(`تم ترقيم ${done} حيوان`);
+  };
+
+  const updateColor = (id, patch) => saveSettings({ ...settings, tagColors: colors.map(c => c.id === id ? { ...c, ...patch } : c) });
+
+  const addColor = () => {
+    if (!newColor.name) { alert('اكتب اسم اللون'); return; }
+    const c = { id: `c_${Date.now()}`, name: newColor.name, hex: newColor.hex, species: newColor.species, from: parseInt(newColor.from, 10) || 1, to: parseInt(newColor.to, 10) || 100 };
+    saveSettings({ ...settings, tagColors: [...colors, c] });
+    setNewColor({ name: '', hex: '#D9453B', species: '', from: 1, to: 100 });
+  };
+
+  const removeColor = (c) => {
+    const inUse = all.some(a => a.tagColor === c.id);
+    if (inUse) { alert('هذا اللون مستخدم في حيوانات مسجلة، لا يمكن حذفه'); return; }
+    if (!window.confirm(`حذف لون ${c.name}؟`)) return;
+    saveSettings({ ...settings, tagColors: colors.filter(x => x.id !== c.id) });
+  };
+
+  const typeKeys = Object.keys(animals || {});
+
+  return (
+    <PageShell title="سجل الأوسمة" icon="🏷️" subtitle="أرقام الأذن والألوان لكل نوع، مع خريطة الأرقام المستخدمة والشاغرة" onClose={onClose}>
+      <Tabs value={tab} onChange={setTab} tabs={[
+        { key: 'map', label: '🗺️ خريطة الأرقام' },
+        { key: 'quick', label: `⚡ ترقيم سريع (${untagged.length})` },
+        { key: 'colors', label: '🎨 الألوان والأنواع' }
+      ]} />
+
+      {tab === 'map' && (
+        <div>
+          {colors.length === 0 && <Empty text="لا توجد ألوان. أضف لوناً من تبويب الألوان." />}
+          {color && (
+            <div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                {colors.map(c => (
+                  <button key={c.id} onClick={() => { setColorId(c.id); setPicked(null); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', borderRadius: '22px', border: color.id === c.id ? `2px solid ${T.primary}` : '2px solid #d6e2db', background: color.id === c.id ? T.soft : 'white', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
+                    <span style={{ width: '18px', height: '18px', borderRadius: '50%', background: c.hex, border: '2px solid #9aa9a1' }} />
+                    {c.name} {c.species ? `· ${typeLabel(c.species)}` : ''}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px', marginBottom: '12px' }}>
+                <Stat label="المستخدم" value={usedCount} color={T.primary} sub={`من ${total}`} />
+                <Stat label="الشاغر" value={freeNumbers.length} color="#2e9e5b" />
+                <Stat label="أول رقم شاغر" value={freeNumbers[0] !== undefined ? freeNumbers[0] : '-'} color="#d4a017" />
+              </div>
+              <Bar value={usedCount} max={Math.max(total, 1)} color={color.hex === '#FFFFFF' ? '#9aa9a1' : color.hex} height={12} />
+              <div style={{ ...cardStyle, padding: '14px', marginTop: '12px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(46px, 1fr))', gap: '6px' }}>
+                  {Array.from({ length: total }, (_, i) => (parseInt(color.from, 10) || 1) + i).map(n => {
+                    const h = holders[String(n)];
+                    const used = h && isActiveAnimal(h);
+                    const gone = h && !isActiveAnimal(h);
+                    const light = hexLight(color.hex);
+                    return (
+                      <button key={n} onClick={() => setPicked({ n, h })} style={{ height: '42px', borderRadius: '10px', cursor: 'pointer', fontWeight: 800, fontSize: '13px', border: picked && picked.n === n ? `3px solid ${T.dark}` : used ? '2px solid rgba(0,0,0,0.25)' : '2px dashed #b9c5be', background: used ? color.hex : gone ? '#eceff0' : 'white', color: used ? (light ? '#222' : 'white') : gone ? '#9aa4a0' : '#8a9a92', textDecoration: gone ? 'line-through' : 'none' }}>
+                        {n}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '11px', color: T.muted, marginTop: '10px' }}>
+                  <span>■ ملون: مستخدم الآن</span><span>▢ منقط: شاغر</span><span>~ مشطوب: كان لحيوان خرج من القطيع (يمكن إعادة استخدامه)</span>
+                </div>
+              </div>
+              {picked && (
+                <div style={{ ...cardStyle, padding: '14px', marginTop: '12px', borderColor: T.primary }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <b style={{ color: T.dark }}>الرقم {picked.n} ({color.name})</b>
+                    <button onClick={() => setPicked(null)} style={{ ...btnStyle('#eee', '#333'), padding: '4px 10px' }}>✕</button>
+                  </div>
+                  {picked.h ? (
+                    <div style={{ fontSize: '13px', lineHeight: 1.9, marginTop: '8px' }}>
+                      <div>الحيوان: <b>#{picked.h.number}</b> · {typeLabel(picked.h.type)} · {picked.h.gender === 'male' ? 'ذكر' : 'أنثى'}</div>
+                      <div>العمر: {ageText(ageParts(picked.h.birthDate, todayStart()))}</div>
+                      <div>الحالة: <b>{statusText(picked.h.status)}</b></div>
+                      {picked.h.motherNumber && <div>الأم: #{picked.h.motherNumber}</div>}
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ fontSize: '13px', color: T.muted, marginBottom: '8px' }}>رقم شاغر. اختر حيواناً بدون وسم لإسناده:</div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <select id="tag-pick-animal" defaultValue="" style={{ ...inputStyle, flex: 1 }}>
+                          <option value="">اختر حيواناً</option>
+                          {all.filter(a => isActiveAnimal(a) && (a.tagNo === undefined || a.tagNo === '' || a.tagNo === null)).map(a => (
+                            <option key={`${a.type}-${a.id}`} value={`${a.type}|${a.id}`}>{typeLabel(a.type)} #{a.number} · {a.gender === 'male' ? 'ذكر' : 'أنثى'} · {ageText(ageParts(a.birthDate, todayStart()))}</option>
+                          ))}
+                        </select>
+                        <button onClick={() => {
+                          const v = document.getElementById('tag-pick-animal').value;
+                          if (!v) { alert('اختر حيواناً'); return; }
+                          const [ty, id] = v.split('|');
+                          const a = all.find(x => x.type === ty && x.id === id);
+                          if (a) { assign(a, color, picked.n); setPicked(null); }
+                        }} style={btnStyle()}>إسناد</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'quick' && (
+        <div>
+          <div style={{ ...cardStyle, padding: '12px', marginBottom: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ ...inputStyle, width: 'auto', minWidth: '140px' }}>
+              <option value="all">كل الأنواع</option>
+              {typeKeys.map(t => <option key={t} value={t}>{typeLabel(t)}</option>)}
+            </select>
+            <button onClick={autoAssign} disabled={untagged.length === 0} style={btnStyle(T.gold, T.dark)}>🪄 ترقيم الكل تلقائياً</button>
+            <span style={{ fontSize: '12px', color: T.muted }}>اكتب الرقم المعلّق على عنق الحيوان واضغط حفظ. الرقم القديم في السجل يبقى كما هو.</span>
+          </div>
+          {untagged.length === 0 && <Empty text="كل الحيوانات النشطة لها أوسمة 🎉" />}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: '10px' }}>
+            {untagged.map(a => {
+              const col = defaultTagColorFor(colors, a.type);
+              const key = `${a.type}-${a.id}`;
+              let nextFree = '';
+              if (col) {
+                const taken = {};
+                all.forEach(x => { if (isActiveAnimal(x) && x.tagColor === col.id && x.tagNo !== undefined && x.tagNo !== '') taken[String(x.tagNo)] = true; });
+                for (let i = parseInt(col.from, 10) || 1; i <= (parseInt(col.to, 10) || 0); i++) { if (!taken[String(i)]) { nextFree = String(i); break; } }
+              }
+              return (
+                <div key={key} style={{ ...cardStyle, padding: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <b style={{ color: T.dark }}>#{a.number} · {typeLabel(a.type)}</b>
+                    <span style={{ fontSize: '12px', color: T.muted }}>{a.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'} · {ageText(ageParts(a.birthDate, todayStart()))}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    {col ? <TagChip color={col} no={draft[key] !== undefined ? (draft[key] || '؟') : (nextFree || '؟')} /> : <span style={{ fontSize: '12px', color: T.red }}>لا يوجد لون لهذا النوع</span>}
+                    <input type="number" min="1" placeholder={nextFree ? `التالي: ${nextFree}` : 'الرقم'} value={draft[key] !== undefined ? draft[key] : ''} onChange={e => setDraft(p => ({ ...p, [key]: e.target.value }))} style={{ ...inputStyle, flex: 1 }} />
+                    <button onClick={() => { assign(a, col, draft[key] !== undefined && draft[key] !== '' ? draft[key] : nextFree); setDraft(p => { const n = { ...p }; delete n[key]; return n; }); }} disabled={!col} style={btnStyle()}>حفظ</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {tab === 'colors' && (
+        <div>
+          <div style={{ fontSize: '13px', color: T.muted, marginBottom: '10px' }}>لكل لون نطاق أرقام ونوع افتراضي. عند إضافة حيوان جديد يُقترح لون نوعه تلقائياً. يمكنك إضافة ألوان أخرى مستقبلاً.</div>
+          {colors.map(c => (
+            <div key={c.id} style={{ ...cardStyle, padding: '12px', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                <TagChip color={c} no={c.from} size={34} />
+                <b style={{ flex: 1 }}>{c.name}</b>
+                <button onClick={() => removeColor(c)} style={{ ...btnStyle('#fdecea', T.red), padding: '6px 10px' }}>🗑️</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px' }}>
+                <div><label style={{ fontSize: '11px', color: T.muted }}>الاسم</label><input value={c.name} onChange={e => updateColor(c.id, { name: e.target.value })} style={inputStyle} /></div>
+                <div><label style={{ fontSize: '11px', color: T.muted }}>اللون</label><input type="color" value={c.hex} onChange={e => updateColor(c.id, { hex: e.target.value })} style={{ ...inputStyle, padding: '2px', height: '40px' }} /></div>
+                <div><label style={{ fontSize: '11px', color: T.muted }}>النوع الافتراضي</label>
+                  <select value={c.species || ''} onChange={e => updateColor(c.id, { species: e.target.value })} style={inputStyle}>
+                    <option value="">بدون</option>
+                    {typeKeys.map(t => <option key={t} value={t}>{typeLabel(t)}</option>)}
+                  </select>
+                </div>
+                <div><label style={{ fontSize: '11px', color: T.muted }}>من رقم</label><input type="number" value={c.from} onChange={e => updateColor(c.id, { from: parseInt(e.target.value, 10) || 1 })} style={inputStyle} /></div>
+                <div><label style={{ fontSize: '11px', color: T.muted }}>إلى رقم</label><input type="number" value={c.to} onChange={e => updateColor(c.id, { to: parseInt(e.target.value, 10) || 1 })} style={inputStyle} /></div>
+              </div>
+            </div>
+          ))}
+          <div style={{ ...cardStyle, padding: '14px', borderStyle: 'dashed', borderColor: T.primary }}>
+            <b style={{ color: T.dark }}>➕ إضافة لون جديد</b>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '10px 0' }}>
+              {TAG_PRESETS.map(p => (
+                <button key={p.name} onClick={() => setNewColor(n => ({ ...n, name: p.name, hex: p.hex }))} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', borderRadius: '16px', border: '1px solid #cfdcd5', background: 'white', cursor: 'pointer', fontSize: '12px' }}>
+                  <span style={{ width: '14px', height: '14px', borderRadius: '50%', background: p.hex }} />{p.name}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px' }}>
+              <input placeholder="اسم اللون" value={newColor.name} onChange={e => setNewColor(n => ({ ...n, name: e.target.value }))} style={inputStyle} />
+              <input type="color" value={newColor.hex} onChange={e => setNewColor(n => ({ ...n, hex: e.target.value }))} style={{ ...inputStyle, padding: '2px', height: '40px' }} />
+              <select value={newColor.species} onChange={e => setNewColor(n => ({ ...n, species: e.target.value }))} style={inputStyle}>
+                <option value="">بدون نوع افتراضي</option>
+                {typeKeys.map(t => <option key={t} value={t}>{typeLabel(t)}</option>)}
+              </select>
+              <input type="number" placeholder="من" value={newColor.from} onChange={e => setNewColor(n => ({ ...n, from: e.target.value }))} style={inputStyle} />
+              <input type="number" placeholder="إلى" value={newColor.to} onChange={e => setNewColor(n => ({ ...n, to: e.target.value }))} style={inputStyle} />
+            </div>
+            <button onClick={addColor} style={{ ...btnStyle(), marginTop: '10px' }}>إضافة اللون</button>
+          </div>
+        </div>
+      )}
+    </PageShell>
+  );
+};
+
+// ============================================================
+// ===== تقرير الأضاحي: أهلية الأضحية يوم العيد =====
+// ============================================================
+const UdhiyahPage = ({ animals, settings, saveSettings, onClose }) => {
+  const [tab, setTab] = useState('ok');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [sexFilter, setSexFilter] = useState('all');
+  const [q, setQ] = useState('');
+  const eid = useMemo(() => getEidDate(settings), [settings]);
+  const today = todayStart();
+  const daysLeft = daysBetween(today, eid);
+  const typeKeys = Object.keys(animals || {});
+
+  const rows = useMemo(() => flattenAnimals(animals)
+    .filter(isActiveAnimal)
+    .map(a => ({ a, info: udhiyahInfo(a, eid, settings) }))
+    .filter(r => r.info)
+    .filter(r => typeFilter === 'all' || r.a.type === typeFilter)
+    .filter(r => sexFilter === 'all' || r.a.gender === sexFilter)
+    .filter(r => {
+      if (!q) return true;
+      return String(r.a.number).includes(q) || String(r.a.tagNo || '').includes(q);
+    })
+    .sort((x, y) => x.info.shortDays - y.info.shortDays), [animals, eid, settings, typeFilter, sexFilter, q]);
+
+  const ok = rows.filter(r => r.info.eligible);
+  const no = rows.filter(r => !r.info.eligible);
+  const soon = no.filter(r => r.info.shortDays <= 30);
+  const shown = tab === 'ok' ? ok : tab === 'no' ? no : tab === 'soon' ? soon : rows;
+  const setMonths = (k, v) => saveSettings({ ...settings, udhiyahMonths: { ...settings.udhiyahMonths, [k]: parseInt(v, 10) || 0 } });
+
+  const exportRows = () => downloadCSV('udhiyah-report', [
+    ['الرقم', 'الوسم', 'النوع', 'الجنس', 'تاريخ الميلاد', 'العمر يوم العيد', 'يضحي؟', 'يتأهل بتاريخ', 'ينقصه (يوم)'],
+    ...shown.map(r => [r.a.number, r.a.tagNo ? `${(findTagColor(settings.tagColors, r.a.tagColor) || {}).name || ''} ${r.a.tagNo}` : '', typeLabel(r.a.type), r.a.gender === 'male' ? 'ذكر' : 'أنثى', fmtDate(pd(r.a.birthDate)), ageText(r.info.ageAtEid), r.info.eligible ? 'نعم' : 'لا', fmtDate(r.info.eligibleDate), r.info.shortDays])
+  ]);
+
+  return (
+    <PageShell title="تقرير الأضاحي" icon="🕌" subtitle={`عيد الأضحى ${fmtDate(eid)} ${hijriText(eid) ? '· ' + hijriText(eid) : ''}`} onClose={onClose} accent="#7a5a12">
+      <div style={{ ...cardStyle, padding: '18px', marginBottom: '14px', background: 'linear-gradient(135deg, #fff8e1, #ffffff)', borderColor: '#f1dc9a', textAlign: 'center' }}>
+        <div style={{ fontSize: '13px', color: T.muted }}>المتبقي على العيد</div>
+        <div style={{ fontSize: '46px', fontWeight: 800, color: '#b7791f', lineHeight: 1.1 }}>{daysLeft > 0 ? daysLeft : 0} <span style={{ fontSize: '16px' }}>يوم</span></div>
+        <div style={{ fontSize: '12px', color: T.muted, marginTop: '4px' }}>الحساب يتم على عمر الحيوان يوم العيد وليس اليوم، حسب الحد الأدنى لكل نوع</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(125px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+        <Stat icon="✅" label="يضحي يوم العيد" value={ok.length} color="#1e7a46" onClick={() => setTab('ok')} />
+        <Stat icon="⏳" label="لا يضحي" value={no.length} color="#b3382f" onClick={() => setTab('no')} />
+        <Stat icon="🔜" label="يتأهل خلال 30 يوم" value={soon.length} color="#d4a017" sub="بعد العيد مباشرة" onClick={() => setTab('soon')} />
+        <Stat icon="🐏" label="ذكور مؤهلة" value={ok.filter(r => r.a.gender === 'male').length} color={T.primary} />
+      </div>
+
+      <div style={{ ...cardStyle, padding: '12px', marginBottom: '12px' }}>
+        <div style={{ fontWeight: 'bold', color: T.dark, marginBottom: '8px', fontSize: '13px' }}>⚙️ إعدادات الحساب (تتزامن بين الأجهزة)</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+          <div>
+            <label style={{ fontSize: '11px', color: T.muted }}>تاريخ العيد (فارغ = تلقائي)</label>
+            <input type="date" value={settings.eidDate || ''} onChange={e => saveSettings({ ...settings, eidDate: e.target.value })} style={inputStyle} />
+          </div>
+          {typeKeys.map(t => (
+            <div key={t}>
+              <label style={{ fontSize: '11px', color: T.muted }}>الحد الأدنى بالأشهر: {typeLabel(t)}</label>
+              <input type="number" min="1" value={udhiyahMonthsFor(settings, t)} onChange={e => setMonths(t, e.target.value)} style={inputStyle} />
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: '11px', color: T.muted, marginTop: '8px', lineHeight: 1.7 }}>
+          الضأن الجذع يكفي له 6 أشهر، أما الماعز فالمعتمد عند أهل العلم أن يتم سنة (12 شهراً)، لذلك ضبطتها 12 للماعز. إن أردت 6 للماعز غيّر الرقم أعلاه.
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+          <option value="all">كل الأنواع</option>
+          {typeKeys.map(t => <option key={t} value={t}>{typeLabel(t)}</option>)}
+        </select>
+        <select value={sexFilter} onChange={e => setSexFilter(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+          <option value="all">ذكور وإناث</option>
+          <option value="male">ذكور</option>
+          <option value="female">إناث</option>
+        </select>
+        <input placeholder="بحث برقم الحيوان أو الوسم" value={q} onChange={e => setQ(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: '160px' }} />
+        <button onClick={exportRows} style={btnStyle(T.gold, T.dark)}>⬇️ تصدير Excel</button>
+      </div>
+
+      <Tabs value={tab} onChange={setTab} tabs={[
+        { key: 'ok', label: `✅ يضحي (${ok.length})` }, { key: 'no', label: `⏳ لا يضحي (${no.length})` },
+        { key: 'soon', label: `🔜 قريب (${soon.length})` }, { key: 'all', label: `📋 الكل (${rows.length})` }
+      ]} />
+
+      {shown.length === 0 && <Empty text="لا توجد حيوانات في هذه القائمة" />}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '10px' }}>
+        {shown.map(({ a, info }) => {
+          const col = findTagColor(settings.tagColors, a.tagColor);
+          return (
+            <div key={`${a.type}-${a.id}`} style={{ ...cardStyle, padding: '12px', borderRight: `5px solid ${info.eligible ? '#2e9e5b' : '#d9534f'}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                {col && a.tagNo ? <TagChip color={col} no={a.tagNo} /> : null}
+                <b style={{ color: T.dark, flex: 1 }}>#{a.number} · {a.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</b>
+                <span style={{ background: info.eligible ? '#e6f4ea' : '#fdecea', color: info.eligible ? '#1e7a46' : '#b3382f', fontWeight: 'bold', fontSize: '12px', padding: '4px 10px', borderRadius: '12px' }}>
+                  {info.eligible ? 'يضحي ✓' : 'لا يضحي'}
+                </span>
+              </div>
+              <div style={{ fontSize: '12px', lineHeight: 1.9, color: '#444' }}>
+                <div>{typeLabel(a.type)} · ميلاده {fmtDate(pd(a.birthDate))}</div>
+                <div>عمره اليوم: <b>{ageText(ageParts(a.birthDate, today))}</b></div>
+                <div>عمره يوم العيد: <b style={{ color: info.eligible ? '#1e7a46' : '#b3382f' }}>{ageText(info.ageAtEid)}</b></div>
+                {!info.eligible && <div style={{ color: '#b3382f' }}>ينقصه {info.shortDays} يوم، يتأهل بتاريخ {fmtDate(info.eligibleDate)}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </PageShell>
+  );
+};
+
+// ============================================================
+// ===== مركز التقارير =====
+// ============================================================
+const SLAUGHTER_LABELS = { regular: 'ذبح عادي', charity: 'صدقة', udhiyah: 'أضحية', aqiqah: 'عقيقة', gift: 'هدية', guest: 'ضيافة' };
+
+const ReportsHub = ({ animals, settings, finance, onOpen, onClose }) => {
+  const [tab, setTab] = useState('hub');
+  const [finMonths, setFinMonths] = useState(12);
+  const today = todayStart();
+  const all = useMemo(() => flattenAnimals(animals), [animals]);
+  const active = useMemo(() => all.filter(isActiveAnimal), [all]);
+  const typeKeys = Object.keys(animals || {});
+
+  // ----- تركيبة القطيع -----
+  const composition = useMemo(() => {
+    const cats = [
+      { label: 'حملان (أقل من 6 أشهر)', test: m => m < 6 },
+      { label: 'فطيم (6 إلى 12 شهر)', test: m => m >= 6 && m < 12 },
+      { label: 'شباب (1 إلى 3 سنوات)', test: m => m >= 12 && m < 36 },
+      { label: 'بالغ (3 إلى 5 سنوات)', test: m => m >= 36 && m < 60 },
+      { label: 'عويد (أكثر من 5 سنوات)', test: m => m >= 60 }
+    ];
+    return typeKeys.map(type => {
+      const list = active.filter(a => a.type === type);
+      const rows = cats.map(c => {
+        const inCat = list.filter(a => { const p = ageParts(a.birthDate, today); return p && c.test(p.months); });
+        return { label: c.label, f: inCat.filter(a => a.gender === 'female').length, m: inCat.filter(a => a.gender === 'male').length };
+      });
+      return { type, total: list.length, rows };
+    });
+  }, [typeKeys, active, today]);
+
+  // ----- الولادات -----
+  const births = useMemo(() => {
+    const events = [];
+    all.forEach(a => {
+      Object.values(a.births || {}).forEach(b => {
+        const d = pd(b.date);
+        if (d) events.push({ mother: a, date: d, count: parseInt(b.count, 10) || 0 });
+      });
+    });
+    const lambs = events.reduce((s, e) => s + e.count, 0);
+    const twins = events.filter(e => e.count >= 2).length;
+    const months = Array.from({ length: 12 }, (_, i) => {
+      const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
+      return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(2)}`, n: 0 };
+    });
+    events.forEach(e => { const k = toISO(e.date).slice(0, 7); const m = months.find(x => x.key === k); if (m) m.n += e.count; });
+    const byMother = {};
+    events.forEach(e => {
+      const k = `${e.mother.type}-${e.mother.id}`;
+      if (!byMother[k]) byMother[k] = { mother: e.mother, events: 0, lambs: 0, last: e.date };
+      byMother[k].events += 1;
+      byMother[k].lambs += e.count;
+      if (e.date > byMother[k].last) byMother[k].last = e.date;
+    });
+    const ranking = Object.values(byMother).sort((a, b) => b.lambs - a.lambs).slice(0, 10);
+    const late = active
+      .filter(a => a.gender === 'female')
+      .filter(a => { const p = ageParts(a.birthDate, today); return p && p.months >= 12; })
+      .map(a => {
+        const k = `${a.type}-${a.id}`;
+        const last = byMother[k] ? byMother[k].last : null;
+        return { a, last, since: last ? daysBetween(last, today) : null };
+      })
+      .filter(r => r.since === null || r.since > 365)
+      .sort((x, y) => (y.since === null ? 99999 : y.since) - (x.since === null ? 99999 : x.since));
+    return { events, lambs, twins, months, ranking, late, avgLitter: events.length ? lambs / events.length : 0 };
+  }, [all, active, today]);
+
+  // ----- الخروج والنفوق -----
+  const exits = useMemo(() => {
+    const sold = all.filter(a => a.status === 'sold');
+    const slaughtered = all.filter(a => a.status === 'slaughtered');
+    const dead = all.filter(a => a.status === 'dead');
+    const byKind = {};
+    slaughtered.forEach(a => { const k = a.slaughterType || 'regular'; byKind[k] = (byKind[k] || 0) + 1; });
+    const revenue = sold.reduce((s, a) => s + (parseFloat(a.salePrice) || 0), 0);
+    const deadRows = dead.map(a => ({ a, age: pd(a.deathDate) ? ageParts(a.birthDate, pd(a.deathDate)) : null }));
+    const rate = all.length ? (dead.length / all.length) * 100 : 0;
+    return { sold, slaughtered, dead, byKind, revenue, deadRows, rate };
+  }, [all]);
+
+  // ----- المالية -----
+  const fin = useMemo(() => {
+    const months = Array.from({ length: finMonths }, (_, i) => {
+      const d = new Date(today.getFullYear(), today.getMonth() - (finMonths - 1) + i, 1);
+      return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`, end: new Date(d.getFullYear(), d.getMonth() + 1, 0), rev: 0, buy: 0, feed: 0, vet: 0, workers: 0, food: 0 };
+    });
+    const put = (dateStr, field, val) => {
+      if (!dateStr || !val) return;
+      const m = months.find(x => x.key === String(dateStr).slice(0, 7));
+      if (m) m[field] += val;
+    };
+    all.forEach(a => {
+      if (a.status === 'sold') put(a.saleDate, 'rev', parseFloat(a.salePrice) || 0);
+      put(a.purchaseDate, 'buy', parseFloat(a.purchasePrice) || 0);
+    });
+    toArr(finance.feedPurchases).forEach(p => put(p.date, 'feed', parseFloat(p.totalCost) || ((parseFloat(p.qty) || 0) * (parseFloat(p.pricePerUnit) || 0))));
+    toArr(finance.vetPurchases).forEach(p => put(p.date, 'vet', (parseFloat(p.qty) || 0) * (parseFloat(p.pricePerUnit) || 0)));
+    toArr(finance.foodRecords).forEach(r => put(r.date, 'food', parseFloat(r.totalCost) || 0));
+    toArr(finance.workers).forEach(w => {
+      const isActive = w.status !== 'travel' && w.status !== 'terminated';
+      const sal = parseFloat(w.salary) || 0;
+      if (isActive && sal > 0) {
+        const start = pd(w.startDate);
+        months.forEach(m => { if (!start || start <= m.end) m.workers += sal; });
+      }
+      (w.costs || []).forEach(c => put(c.date, 'workers', parseFloat(c.amount) || 0));
+    });
+    months.forEach(m => { m.cost = m.buy + m.feed + m.vet + m.workers + m.food; m.net = m.rev - m.cost; });
+    const sum = (f) => months.reduce((s, m) => s + m[f], 0);
+    const totals = { rev: sum('rev'), buy: sum('buy'), feed: sum('feed'), vet: sum('vet'), workers: sum('workers'), food: sum('food'), cost: sum('cost'), net: sum('net') };
+    return { months, totals };
+  }, [all, finance, finMonths, today]);
+
+  const maxFin = Math.max(1, ...fin.months.map(m => Math.max(m.rev, m.cost)));
+  const money = (n) => Math.round(n).toLocaleString('en-US');
+
+  const tiles = [
+    { key: 'herd', icon: '🧬', label: 'تركيبة القطيع', desc: 'الفئات العمرية لكل نوع', local: true },
+    { key: 'births', icon: '🍼', label: 'تقرير الولادات', desc: 'التوائم، أفضل الأمهات، المتأخرات', local: true },
+    { key: 'exits', icon: '☠️', label: 'النفوق والخروج', desc: 'بيع، ذبح، نفوق، نسبة النفوق', local: true },
+    { key: 'finance', icon: '💹', label: 'الملخص المالي', desc: 'إيرادات ومصروفات شهرياً', local: true },
+    { key: 'udhiyah', icon: '🕌', label: 'تقرير الأضاحي', desc: 'من يضحي يوم العيد' },
+    { key: 'tags', icon: '🏷️', label: 'سجل الأوسمة', desc: 'خريطة الأرقام والألوان' },
+    { key: 'age', icon: '👴', label: 'تقرير العويد', desc: 'الكبار وآخر ولادة' },
+    { key: 'numbers', icon: '🔢', label: 'تقرير الأرقام', desc: 'قائمة بكل الأرقام' },
+    { key: 'sales', icon: '💰', label: 'المبيعات والأرباح', desc: 'سجل البيع والربح' },
+    { key: 'production', icon: '📈', label: 'تقرير الإنتاج', desc: 'ترتيب الإناث بالإنتاج' }
+  ];
+
+  const th = { padding: '9px', textAlign: 'right', fontSize: '12px', background: T.soft, color: T.dark, fontWeight: 'bold' };
+  const td = { padding: '9px', fontSize: '13px', borderBottom: '1px solid #eef2ef' };
+
+  return (
+    <PageShell title="مركز التقارير" icon="📑" subtitle="كل تقارير المزرعة في مكان واحد" onClose={onClose}>
+      {tab !== 'hub' && <button onClick={() => setTab('hub')} style={{ ...btnStyle(T.soft, T.primary), marginBottom: '12px' }}>← كل التقارير</button>}
+
+      {tab === 'hub' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
+          {tiles.map(t => (
+            <div key={t.key} onClick={() => (t.local ? setTab(t.key) : onOpen(t.key))} style={{ ...cardStyle, padding: '16px', cursor: 'pointer', transition: 'transform .15s' }}>
+              <div style={{ fontSize: '30px' }}>{t.icon}</div>
+              <div style={{ fontWeight: 800, color: T.dark, margin: '6px 0 2px' }}>{t.label}</div>
+              <div style={{ fontSize: '12px', color: T.muted }}>{t.desc}</div>
+              {t.local && <span style={{ display: 'inline-block', marginTop: '8px', background: '#fff3cd', color: '#8a6d00', fontSize: '10px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px' }}>جديد</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'herd' && (
+        <div>
+          {composition.length === 0 && <Empty text="لا توجد بيانات" />}
+          {composition.map(c => (
+            <div key={c.type} style={{ ...cardStyle, marginBottom: '14px', overflow: 'hidden' }}>
+              <div style={{ background: T.dark, color: 'white', padding: '12px 14px', display: 'flex', justifyContent: 'space-between' }}>
+                <b>{typeLabel(c.type)}</b><span>{c.total} رأس نشط</span>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={th}>الفئة</th><th style={th}>♀ إناث</th><th style={th}>♂ ذكور</th><th style={th}>المجموع</th><th style={{ ...th, width: '35%' }}>النسبة</th></tr></thead>
+                  <tbody>
+                    {c.rows.map(r => (
+                      <tr key={r.label}>
+                        <td style={td}>{r.label}</td><td style={td}>{r.f}</td><td style={td}>{r.m}</td><td style={{ ...td, fontWeight: 'bold' }}>{r.f + r.m}</td>
+                        <td style={td}><Bar value={r.f + r.m} max={Math.max(c.total, 1)} color={T.primary} height={8} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'births' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+            <Stat icon="🐣" label="مرات الولادة" value={births.events.length} color={T.primary} />
+            <Stat icon="🍼" label="إجمالي المواليد" value={births.lambs} color="#2e9e5b" />
+            <Stat icon="👯" label="نسبة التوائم" value={births.events.length ? `${Math.round((births.twins / births.events.length) * 100)}%` : '-'} color="#d4a017" sub={`${births.twins} ولادة توأم`} />
+            <Stat icon="⚖️" label="متوسط الولادة" value={births.avgLitter ? births.avgLitter.toFixed(2) : '-'} color={T.blue} sub="مولود لكل ولادة" />
+          </div>
+          <SectionTitle>المواليد آخر 12 شهراً</SectionTitle>
+          <div style={{ ...cardStyle, padding: '14px', display: 'flex', alignItems: 'flex-end', gap: '6px', height: '170px' }}>
+            {births.months.map(m => {
+              const mx = Math.max(1, ...births.months.map(x => x.n));
+              return (
+                <div key={m.key} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 'bold', color: T.primary }}>{m.n || ''}</div>
+                  <div style={{ width: '100%', maxWidth: '28px', height: `${(m.n / mx) * 100}px`, minHeight: m.n ? '4px' : '1px', background: m.n ? T.primary : '#dbe7e0', borderRadius: '6px 6px 0 0' }} />
+                  <div style={{ fontSize: '9px', color: T.muted, marginTop: '4px' }}>{m.label}</div>
+                </div>
+              );
+            })}
+          </div>
+          <SectionTitle>🏆 أفضل الأمهات</SectionTitle>
+          {births.ranking.length === 0 ? <Empty text="لا توجد ولادات مسجلة بعد" /> : (
+            <div style={{ ...cardStyle, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={th}>#</th><th style={th}>الأم</th><th style={th}>مرات الولادة</th><th style={th}>المواليد</th><th style={th}>آخر ولادة</th></tr></thead>
+                <tbody>
+                  {births.ranking.map((r, i) => (
+                    <tr key={`${r.mother.type}-${r.mother.id}`}>
+                      <td style={td}>{i + 1}</td><td style={{ ...td, fontWeight: 'bold' }}>#{r.mother.number} {r.mother.tagNo ? `(وسم ${r.mother.tagNo})` : ''}</td>
+                      <td style={td}>{r.events}</td><td style={td}>{r.lambs}</td><td style={td}>{fmtDate(r.last)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <SectionTitle>⏰ إناث بالغة لم تلد منذ أكثر من سنة ({births.late.length})</SectionTitle>
+          {births.late.length === 0 ? <Empty text="كل الإناث البالغة ولدت خلال السنة الأخيرة" /> : (
+            <div style={{ ...cardStyle, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={th}>الرقم</th><th style={th}>النوع</th><th style={th}>العمر</th><th style={th}>آخر ولادة</th></tr></thead>
+                <tbody>
+                  {births.late.slice(0, 40).map(r => (
+                    <tr key={`${r.a.type}-${r.a.id}`}>
+                      <td style={{ ...td, fontWeight: 'bold' }}>#{r.a.number}</td><td style={td}>{typeLabel(r.a.type)}</td>
+                      <td style={td}>{ageText(ageParts(r.a.birthDate, today))}</td>
+                      <td style={{ ...td, color: T.red }}>{r.last ? `منذ ${r.since} يوم` : 'لم تلد (حسب السجل)'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'exits' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+            <Stat icon="💰" label="مباع" value={exits.sold.length} color={T.blue} sub={`${money(exits.revenue)} ريال`} />
+            <Stat icon="🔪" label="مذبوح" value={exits.slaughtered.length} color="#e67e22" />
+            <Stat icon="☠️" label="نافق" value={exits.dead.length} color={T.red} />
+            <Stat icon="📉" label="نسبة النفوق" value={`${exits.rate.toFixed(1)}%`} color={exits.rate > 5 ? T.red : '#2e9e5b'} sub="من إجمالي السجل" />
+          </div>
+          <SectionTitle>أنواع الذبح</SectionTitle>
+          {Object.keys(exits.byKind).length === 0 ? <Empty text="لا توجد ذبائح مسجلة" /> : (
+            <div style={{ ...cardStyle, padding: '14px' }}>
+              {Object.entries(exits.byKind).map(([k, n]) => (
+                <div key={k} style={{ marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '3px' }}><span>{SLAUGHTER_LABELS[k] || k}</span><b>{n}</b></div>
+                  <Bar value={n} max={exits.slaughtered.length} color="#e67e22" height={8} />
+                </div>
+              ))}
+            </div>
+          )}
+          <SectionTitle>سجل النفوق</SectionTitle>
+          {exits.deadRows.length === 0 ? <Empty text="لا يوجد نفوق مسجل. لتسجيل نفوق: عدّل الحيوان واختر الحالة (نافق) مع التاريخ والسبب. ويمكنك استرجاعه بإعادة الحالة إلى نشط." /> : (
+            <div style={{ ...cardStyle, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={th}>الرقم</th><th style={th}>النوع</th><th style={th}>تاريخ النفوق</th><th style={th}>العمر عند النفوق</th><th style={th}>السبب</th></tr></thead>
+                <tbody>
+                  {exits.deadRows.map(r => (
+                    <tr key={`${r.a.type}-${r.a.id}`}>
+                      <td style={{ ...td, fontWeight: 'bold' }}>#{r.a.number}</td><td style={td}>{typeLabel(r.a.type)}</td>
+                      <td style={td}>{r.a.deathDate ? fmtDate(pd(r.a.deathDate)) : '-'}</td><td style={td}>{r.age ? ageText(r.age) : '-'}</td><td style={td}>{r.a.deathCause || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'finance' && (
+        <div>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px' }}>الفترة:</span>
+            {[3, 6, 12, 24].map(n => (
+              <button key={n} onClick={() => setFinMonths(n)} style={{ ...btnStyle(finMonths === n ? T.primary : 'white', finMonths === n ? 'white' : T.text), border: '1px solid #cfdcd5', padding: '6px 14px' }}>{n} شهر</button>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+            <Stat icon="📥" label="الإيرادات" value={money(fin.totals.rev)} color="#2e9e5b" sub="ريال" />
+            <Stat icon="📤" label="المصروفات" value={money(fin.totals.cost)} color="#e67e22" sub="ريال" />
+            <Stat icon="📊" label="الصافي" value={money(fin.totals.net)} color={fin.totals.net >= 0 ? T.primary : T.red} sub="ريال" />
+            <Stat icon="🐑" label="تكلفة الرأس شهرياً" value={active.length ? money(fin.totals.cost / finMonths / active.length) : '-'} color={T.blue} sub="ريال / رأس نشط" />
+          </div>
+          <SectionTitle>توزيع المصروفات</SectionTitle>
+          <div style={{ ...cardStyle, padding: '14px' }}>
+            {[['🌾 الأعلاف', fin.totals.feed, '#d4a017'], ['👷 العمال (رواتب وتكاليف)', fin.totals.workers, '#7b5ea7'], ['🍽️ الزاد', fin.totals.food, '#e67e22'], ['🩺 الأدوية', fin.totals.vet, '#2e9e5b'], ['🐑 شراء حيوانات', fin.totals.buy, T.blue]].map(([l, v, c]) => (
+              <div key={l} style={{ marginBottom: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '3px' }}><span>{l}</span><b>{money(v)} ({fin.totals.cost ? Math.round((v / fin.totals.cost) * 100) : 0}%)</b></div>
+                <Bar value={v} max={Math.max(fin.totals.cost, 1)} color={c} height={8} />
+              </div>
+            ))}
+          </div>
+          <SectionTitle>شهرياً</SectionTitle>
+          <div style={{ ...cardStyle, overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '560px' }}>
+              <thead><tr><th style={th}>الشهر</th><th style={th}>الإيرادات</th><th style={th}>المصروفات</th><th style={th}>الصافي</th><th style={{ ...th, width: '28%' }}>المقارنة</th></tr></thead>
+              <tbody>
+                {[...fin.months].reverse().map(m => (
+                  <tr key={m.key}>
+                    <td style={td}>{m.label}</td><td style={{ ...td, color: '#2e9e5b' }}>{money(m.rev)}</td><td style={{ ...td, color: '#e67e22' }}>{money(m.cost)}</td>
+                    <td style={{ ...td, fontWeight: 'bold', color: m.net >= 0 ? T.primary : T.red }}>{money(m.net)}</td>
+                    <td style={td}>
+                      <Bar value={m.rev} max={maxFin} color="#2e9e5b" height={6} />
+                      <div style={{ height: '3px' }} />
+                      <Bar value={m.cost} max={maxFin} color="#e67e22" height={6} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: '11px', color: T.muted, marginTop: '10px', lineHeight: 1.8 }}>
+            ملاحظة: رواتب العمال تُحسب شهرياً للعمال النشطين حالياً من تاريخ مباشرتهم. تُحسب المبيعات بتاريخ البيع وشراء الحيوانات بتاريخ الشراء. الغاز والمواطير والصيانة غير مشمولة هنا.
+          </div>
+        </div>
+      )}
+    </PageShell>
+  );
+};
+
+// ============================================================
+// ===== المهام والتذكيرات (تطعيم، علاج، فحص) مع التكرار =====
+// ============================================================
+const REPEAT_OPTIONS = [
+  { v: 0, l: 'مرة واحدة' }, { v: 1, l: 'كل يوم' }, { v: 7, l: 'كل أسبوع' }, { v: 14, l: 'كل أسبوعين' },
+  { v: 30, l: 'كل شهر' }, { v: 90, l: 'كل 3 أشهر' }, { v: 180, l: 'كل 6 أشهر' }, { v: 365, l: 'كل سنة' }
+];
+
+const TASK_CATEGORIES = ['تطعيم', 'علاج', 'فحص', 'مضاد طفيليات', 'وزن', 'تقليم أظلاف', 'تغذية', 'أخرى'];
+
+const TASK_TEMPLATES = [
+  { title: 'تطعيم الحمى القلاعية', category: 'تطعيم', repeat: 180 },
+  { title: 'تطعيم الجدري', category: 'تطعيم', repeat: 365 },
+  { title: 'تطعيم التسمم المعوي', category: 'تطعيم', repeat: 180 },
+  { title: 'تطعيم حمى الوادي المتصدع', category: 'تطعيم', repeat: 365 },
+  { title: 'جرعة مضاد طفيليات', category: 'مضاد طفيليات', repeat: 90 },
+  { title: 'تقليم الأظلاف', category: 'تقليم أظلاف', repeat: 180 },
+  { title: 'وزن الحملان', category: 'وزن', repeat: 30 },
+  { title: 'فحص الحمل', category: 'فحص', repeat: 0 }
+];
+
+const TasksPage = ({ tasks, saveTasks, settings, saveSettings, animalTypes, onClose }) => {
+  const blank = { title: '', category: 'تطعيم', target: 'all', due: toISO(new Date()), repeatDays: 0, note: '' };
+  const [form, setForm] = useState(blank);
+  const [editId, setEditId] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [newBarn, setNewBarn] = useState('');
+  const today = todayStart();
+  const barns = settings.barns || [];
+
+  const targetLabel = (t) => {
+    if (!t || t === 'all') return 'كل القطيع';
+    if (t.startsWith('type:')) return typeLabel(t.slice(5));
+    if (t.startsWith('barn:')) return `حظيرة ${t.slice(5)}`;
+    return t;
+  };
+
+  const save = () => {
+    if (!form.title) { alert('اكتب عنوان المهمة'); return; }
+    if (!form.due) { alert('اختر التاريخ'); return; }
+    if (editId) {
+      saveTasks(tasks.map(t => t.id === editId ? { ...t, ...form, repeatDays: parseInt(form.repeatDays, 10) || 0 } : t));
+    } else {
+      saveTasks([...tasks, { id: `tk_${Date.now()}`, ...form, repeatDays: parseInt(form.repeatDays, 10) || 0, active: true, history: [] }]);
+    }
+    setForm(blank); setEditId(null); setShowForm(false);
+  };
+
+  const done = (t) => {
+    const hist = [...(t.history || []), { date: toISO(new Date()) }];
+    if (t.repeatDays > 0) {
+      const due = pd(t.due) || today;
+      const base = due > today ? due : today;
+      const next = new Date(base.getTime() + t.repeatDays * 86400000);
+      saveTasks(tasks.map(x => x.id === t.id ? { ...x, due: toISO(next), history: hist } : x));
+    } else {
+      saveTasks(tasks.map(x => x.id === t.id ? { ...x, active: false, history: hist } : x));
+    }
+  };
+
+  const remove = (t) => { if (window.confirm('حذف هذه المهمة؟')) saveTasks(tasks.filter(x => x.id !== t.id)); };
+
+  const addBarn = () => {
+    const name = newBarn.trim();
+    if (!name || barns.includes(name)) return;
+    saveSettings({ ...settings, barns: [...barns, name] });
+    setNewBarn('');
+  };
+
+  const open = tasks.filter(t => t.active !== false).map(t => ({ t, d: daysBetween(today, pd(t.due) || today) })).sort((a, b) => a.d - b.d);
+  const groups = [
+    { label: '🔴 متأخرة', color: T.red, items: open.filter(x => x.d < 0) },
+    { label: '🟠 اليوم وخلال 7 أيام', color: '#e67e22', items: open.filter(x => x.d >= 0 && x.d <= 7) },
+    { label: '🟢 لاحقاً', color: T.primary, items: open.filter(x => x.d > 7) }
+  ];
+  const finished = tasks.filter(t => t.active === false);
+
+  return (
+    <PageShell title="المهام والتذكيرات" icon="📅" subtitle="تطعيمات وعلاجات وفحوصات بتكرار تلقائي، وتظهر في التنبيهات" onClose={onClose}>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <button onClick={() => { setForm(blank); setEditId(null); setShowForm(true); }} style={btnStyle()}>➕ مهمة جديدة</button>
+        <div style={{ display: 'flex', gap: '6px', flex: 1, minWidth: '220px' }}>
+          <input placeholder="إضافة حظيرة (مثال: حظيرة 1)" value={newBarn} onChange={e => setNewBarn(e.target.value)} style={inputStyle} />
+          <button onClick={addBarn} style={btnStyle(T.gold, T.dark)}>＋ حظيرة</button>
+        </div>
+      </div>
+      {barns.length > 0 && (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+          {barns.map(b => (
+            <span key={b} style={{ background: T.soft, border: '1px solid #cfdcd5', borderRadius: '16px', padding: '4px 10px', fontSize: '12px' }}>
+              🏠 {b} <button onClick={() => { if (window.confirm(`حذف الحظيرة ${b}؟`)) saveSettings({ ...settings, barns: barns.filter(x => x !== b) }); }} style={{ background: 'none', border: 'none', color: T.red, cursor: 'pointer' }}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {showForm && (
+        <div style={{ ...cardStyle, padding: '16px', marginBottom: '14px', borderColor: T.primary }}>
+          <b style={{ color: T.dark }}>{editId ? '✏️ تعديل المهمة' : '➕ مهمة جديدة'}</b>
+          {!editId && (
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '10px 0' }}>
+              <span style={{ fontSize: '12px', color: T.muted, alignSelf: 'center' }}>قوالب مقترحة (اضبط المواعيد مع الطبيب البيطري):</span>
+              {TASK_TEMPLATES.map(tp => (
+                <button key={tp.title} onClick={() => setForm(f => ({ ...f, title: tp.title, category: tp.category, repeatDays: tp.repeat }))} style={{ padding: '4px 10px', borderRadius: '14px', border: '1px solid #cfdcd5', background: 'white', cursor: 'pointer', fontSize: '12px' }}>{tp.title}</button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginTop: '10px' }}>
+            <div><label style={{ fontSize: '11px', color: T.muted }}>العنوان</label><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={inputStyle} /></div>
+            <div><label style={{ fontSize: '11px', color: T.muted }}>التصنيف</label>
+              <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} style={inputStyle}>{TASK_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select>
+            </div>
+            <div><label style={{ fontSize: '11px', color: T.muted }}>يشمل</label>
+              <select value={form.target} onChange={e => setForm({ ...form, target: e.target.value })} style={inputStyle}>
+                <option value="all">كل القطيع</option>
+                {animalTypes.map(t => <option key={t} value={`type:${t}`}>{typeLabel(t)}</option>)}
+                {barns.map(b => <option key={b} value={`barn:${b}`}>حظيرة {b}</option>)}
+              </select>
+            </div>
+            <div><label style={{ fontSize: '11px', color: T.muted }}>الموعد</label><input type="date" value={form.due} onChange={e => setForm({ ...form, due: e.target.value })} style={inputStyle} /></div>
+            <div><label style={{ fontSize: '11px', color: T.muted }}>التكرار</label>
+              <select value={REPEAT_OPTIONS.some(o => o.v === parseInt(form.repeatDays, 10)) ? parseInt(form.repeatDays, 10) : 'custom'} onChange={e => setForm({ ...form, repeatDays: e.target.value === 'custom' ? 10 : parseInt(e.target.value, 10) })} style={inputStyle}>
+                {REPEAT_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                <option value="custom">كل عدد أيام مخصص</option>
+              </select>
+            </div>
+            {!REPEAT_OPTIONS.some(o => o.v === parseInt(form.repeatDays, 10)) && (
+              <div><label style={{ fontSize: '11px', color: T.muted }}>كل كم يوم</label><input type="number" min="1" value={form.repeatDays} onChange={e => setForm({ ...form, repeatDays: e.target.value })} style={inputStyle} /></div>
+            )}
+            <div style={{ gridColumn: '1 / -1' }}><label style={{ fontSize: '11px', color: T.muted }}>ملاحظة</label><input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} style={inputStyle} /></div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+            <button onClick={save} style={btnStyle()}>💾 حفظ</button>
+            <button onClick={() => { setShowForm(false); setEditId(null); }} style={btnStyle('#e5e9e7', '#333')}>إلغاء</button>
+          </div>
+        </div>
+      )}
+
+      {open.length === 0 && <Empty text="لا توجد مهام نشطة. أضف أول مهمة من الزر أعلاه أو اختر قالباً جاهزاً." />}
+      {groups.map(g => g.items.length > 0 && (
+        <div key={g.label}>
+          <SectionTitle>{g.label} ({g.items.length})</SectionTitle>
+          <div style={{ display: 'grid', gap: '8px' }}>
+            {g.items.map(({ t, d }) => (
+              <div key={t.id} style={{ ...cardStyle, padding: '12px', borderRight: `5px solid ${g.color}`, display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '180px' }}>
+                  <div style={{ fontWeight: 'bold', color: T.dark }}>{t.title}</div>
+                  <div style={{ fontSize: '12px', color: T.muted, marginTop: '2px' }}>
+                    {t.category} · {targetLabel(t.target)} · {fmtDate(pd(t.due))} {t.repeatDays > 0 ? `· يتكرر كل ${t.repeatDays} يوم` : ''}
+                  </div>
+                  {t.note && <div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>{t.note}</div>}
+                </div>
+                <b style={{ color: g.color, fontSize: '13px', whiteSpace: 'nowrap' }}>{d < 0 ? `متأخر ${-d} يوم` : d === 0 ? 'اليوم' : `بعد ${d} يوم`}</b>
+                <button onClick={() => done(t)} style={btnStyle('#2e9e5b')}>✅ تم</button>
+                <button onClick={() => { setForm({ title: t.title, category: t.category, target: t.target, due: t.due, repeatDays: t.repeatDays, note: t.note || '' }); setEditId(t.id); setShowForm(true); window.scrollTo(0, 0); }} style={btnStyle('#e8f0ec', T.primary)}>✏️</button>
+                <button onClick={() => remove(t)} style={btnStyle('#fdecea', T.red)}>🗑️</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {finished.length > 0 && (
+        <div>
+          <SectionTitle>✔️ منتهية ({finished.length})</SectionTitle>
+          {finished.slice(-10).reverse().map(t => (
+            <div key={t.id} style={{ ...cardStyle, padding: '10px 12px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: T.muted }}>
+              <span>{t.title} ({targetLabel(t.target)})</span>
+              <span>أُنجزت {fmtDate(pd((t.history || [])[(t.history || []).length - 1] ? t.history[t.history.length - 1].date : t.due))} <button onClick={() => remove(t)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>🗑️</button></span>
+            </div>
+          ))}
+        </div>
+      )}
+    </PageShell>
+  );
+};
+
+// ============================================================
+// ===== حاسبة العليقة والتسمين =====
+// ============================================================
+const FEEDCALC_DEFAULT = {
+  heads: 20,
+  lines: [
+    { id: 'l1', name: 'شعير', kg: 0.6, price: 1.4 },
+    { id: 'l2', name: 'برسيم', kg: 0.5, price: 1.2 },
+    { id: 'l3', name: 'مكعب', kg: 0.3, price: 1.6 }
+  ],
+  startW: 25, targetW: 45, gainG: 200, buyPrice: 450, sellPerKg: 32, extra: 0.3
+};
+
+const FeedCalcPage = ({ userId, onClose }) => {
+  const [c, setC] = useFarmData(userId, 'feedCalc', FEEDCALC_DEFAULT);
+  const num = (v) => parseFloat(v) || 0;
+  const lines = c.lines || [];
+  const perHead = lines.reduce((s, l) => s + num(l.kg) * num(l.price), 0) + num(c.extra);
+  const kgPerHead = lines.reduce((s, l) => s + num(l.kg), 0);
+  const days = num(c.gainG) > 0 ? Math.ceil(((num(c.targetW) - num(c.startW)) * 1000) / num(c.gainG)) : 0;
+  const feedTotal = perHead * days;
+  const costHead = num(c.buyPrice) + feedTotal;
+  const revenue = num(c.targetW) * num(c.sellPerKg);
+  const profit = revenue - costHead;
+  const costPerKgGain = num(c.targetW) > num(c.startW) ? feedTotal / (num(c.targetW) - num(c.startW)) : 0;
+  const dm = ((num(c.startW) + num(c.targetW)) / 2) * 0.035;
+  const upd = (patch) => setC({ ...c, ...patch });
+  const updLine = (id, patch) => upd({ lines: lines.map(l => l.id === id ? { ...l, ...patch } : l) });
+  const fmt2 = (n) => (Math.round(n * 100) / 100).toLocaleString('en-US');
+
+  return (
+    <PageShell title="حاسبة العليقة والتسمين" icon="🧮" subtitle="تكلفة العلف اليومية وربحية التسمين (تُحفظ وتتزامن)" onClose={onClose} accent="#6b4f12">
+      <SectionTitle>1) تكلفة العليقة اليومية للرأس</SectionTitle>
+      <div style={{ ...cardStyle, padding: '14px' }}>
+        {lines.map(l => (
+          <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr auto', gap: '8px', marginBottom: '8px', alignItems: 'end' }}>
+            <div><label style={{ fontSize: '11px', color: T.muted }}>العلف</label><input value={l.name} onChange={e => updLine(l.id, { name: e.target.value })} style={inputStyle} /></div>
+            <div><label style={{ fontSize: '11px', color: T.muted }}>كجم / رأس / يوم</label><input type="number" step="0.05" value={l.kg} onChange={e => updLine(l.id, { kg: e.target.value })} style={inputStyle} /></div>
+            <div><label style={{ fontSize: '11px', color: T.muted }}>سعر الكجم (ريال)</label><input type="number" step="0.05" value={l.price} onChange={e => updLine(l.id, { price: e.target.value })} style={inputStyle} /></div>
+            <button onClick={() => upd({ lines: lines.filter(x => x.id !== l.id) })} style={btnStyle('#fdecea', T.red)}>✕</button>
+          </div>
+        ))}
+        <button onClick={() => upd({ lines: [...lines, { id: `l${Date.now()}`, name: '', kg: 0, price: 0 }] })} style={btnStyle(T.soft, T.primary)}>➕ إضافة علف</button>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginTop: '12px' }}>
+          <div><label style={{ fontSize: '11px', color: T.muted }}>مصاريف أخرى يومية / رأس (ماء، أدوية)</label><input type="number" step="0.05" value={c.extra} onChange={e => upd({ extra: e.target.value })} style={inputStyle} /></div>
+          <div><label style={{ fontSize: '11px', color: T.muted }}>عدد الرؤوس</label><input type="number" value={c.heads} onChange={e => upd({ heads: e.target.value })} style={inputStyle} /></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', marginTop: '12px' }}>
+          <Stat label="كمية العلف / رأس / يوم" value={`${fmt2(kgPerHead)} كجم`} color={T.primary} />
+          <Stat label="تكلفة الرأس يومياً" value={fmt2(perHead)} color="#e67e22" sub="ريال" />
+          <Stat label="تكلفة القطيع يومياً" value={fmt2(perHead * num(c.heads))} color={T.blue} sub="ريال" />
+          <Stat label="تكلفة القطيع شهرياً" value={fmt2(perHead * num(c.heads) * 30)} color={T.purple} sub="ريال" />
+        </div>
+      </div>
+
+      <SectionTitle>2) ربحية التسمين</SectionTitle>
+      <div style={{ ...cardStyle, padding: '14px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+          <div><label style={{ fontSize: '11px', color: T.muted }}>وزن البداية (كجم)</label><input type="number" value={c.startW} onChange={e => upd({ startW: e.target.value })} style={inputStyle} /></div>
+          <div><label style={{ fontSize: '11px', color: T.muted }}>الوزن المستهدف (كجم)</label><input type="number" value={c.targetW} onChange={e => upd({ targetW: e.target.value })} style={inputStyle} /></div>
+          <div><label style={{ fontSize: '11px', color: T.muted }}>الزيادة اليومية (جرام)</label><input type="number" value={c.gainG} onChange={e => upd({ gainG: e.target.value })} style={inputStyle} /></div>
+          <div><label style={{ fontSize: '11px', color: T.muted }}>سعر شراء / تكلفة الرأس</label><input type="number" value={c.buyPrice} onChange={e => upd({ buyPrice: e.target.value })} style={inputStyle} /></div>
+          <div><label style={{ fontSize: '11px', color: T.muted }}>سعر بيع الكيلو القائم</label><input type="number" value={c.sellPerKg} onChange={e => upd({ sellPerKg: e.target.value })} style={inputStyle} /></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', marginTop: '12px' }}>
+          <Stat label="مدة التسمين" value={`${days} يوم`} color={T.primary} />
+          <Stat label="تكلفة العلف للرأس" value={fmt2(feedTotal)} color="#e67e22" sub="ريال" />
+          <Stat label="إجمالي تكلفة الرأس" value={fmt2(costHead)} color={T.blue} sub="ريال" />
+          <Stat label="سعر البيع المتوقع" value={fmt2(revenue)} color="#2e9e5b" sub="ريال" />
+          <Stat label="ربح الرأس" value={fmt2(profit)} color={profit >= 0 ? '#2e9e5b' : T.red} sub={`${fmt2(profit * num(c.heads))} ريال للقطيع`} />
+          <Stat label="تكلفة علف كل كجم زيادة" value={fmt2(costPerKgGain)} color={T.purple} sub="ريال" />
+        </div>
+        <div style={{ fontSize: '12px', color: T.muted, marginTop: '10px', lineHeight: 1.8 }}>
+          مرجع تقريبي: احتياج المادة الجافة نحو 3 إلى 4% من وزن الجسم، أي حوالي {fmt2(dm)} كجم مادة جافة يومياً عند متوسط الوزن. الأرقام الافتراضية تقديرية، عدّلها حسب أسعارك الفعلية.
+        </div>
+      </div>
+    </PageShell>
+  );
 };
 
 const App = () => {
@@ -75,7 +1580,7 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [selectedAnimalType, setSelectedAnimalType] = useState(null);
-  const [showDashboard, setShowDashboard] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(true);
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [passwordData, setPasswordData] = useState({ old: '', new: '', confirm: '' });
@@ -408,6 +1913,26 @@ const App = () => {
   const [foodRecords, setFoodRecords] = useState(() => { const s = localStorage.getItem('workerFoodRecords'); return s ? JSON.parse(s) : []; });
   const [adminPanelError, setAdminPanelError] = useState('');
   const [animalForm, setAnimalForm] = useState(EMPTY_FORM);
+  const [farmSettings, saveFarmSettings] = useFarmData(user ? user.id : null, 'farmSettings', DEFAULT_SETTINGS);
+  const settings = useMemo(() => {
+    const fs = farmSettings || {};
+    return {
+      ...DEFAULT_SETTINGS, ...fs,
+      udhiyahMonths: { ...DEFAULT_SETTINGS.udhiyahMonths, ...(fs.udhiyahMonths || {}) },
+      tagColors: fs.tagColors && fs.tagColors.length ? fs.tagColors : DEFAULT_SETTINGS.tagColors,
+      barns: fs.barns || []
+    };
+  }, [farmSettings]);
+  const [tasksRaw, saveTasks] = useFarmData(user ? user.id : null, 'farmTasks', []);
+  const tasks = useMemo(() => (Array.isArray(tasksRaw) ? tasksRaw : Object.values(tasksRaw || {})), [tasksRaw]);
+  const eidDate = useMemo(() => getEidDate(settings), [settings]);
+  const [activePage, setActivePage] = useState('');
+  const [fontScale, setFontScale] = useState(() => parseFloat(localStorage.getItem('fh2_fontScale')) || 1);
+  const changeFont = (delta) => {
+    const next = Math.min(1.3, Math.max(0.85, Math.round((fontScale + delta) * 100) / 100));
+    setFontScale(next);
+    try { localStorage.setItem('fh2_fontScale', String(next)); } catch (err) { /* تجاهل */ }
+  };
   const [allUsers, setAllUsers] = useState(() => {
     const saved = localStorage.getItem('allUsers');
     return saved ? JSON.parse(saved) : DEFAULT_ADMIN;
@@ -693,12 +2218,39 @@ const App = () => {
     if (!animal) return;
     const births = animal.births || {};
     const birthId = `birth_${Date.now()}`;
+    const { registerLambs, lambs, ...birthData } = birthForm;
+    const cnt = parseInt(birthForm.count, 10) || 0;
+    const lambCol = defaultTagColorFor(settings.tagColors, birthAnimal.type);
+    if (registerLambs) {
+      const existing = flattenAnimals(animals).filter(isActiveAnimal);
+      const seen = {};
+      for (let i = 0; i < cnt; i++) {
+        const tn = ((lambs || [])[i] || {}).tagNo;
+        if (tn && lambCol) {
+          const dup = existing.find(x => x.tagColor === lambCol.id && String(x.tagNo) === String(tn)) || seen[String(tn)];
+          if (dup) { alert(`رقم الوسم ${tn} مستخدم مسبقاً`); return; }
+          seen[String(tn)] = true;
+        }
+      }
+    }
     const updatedAnimal = {
       ...animal,
-      births: { ...births, [birthId]: { ...birthForm, count: parseInt(birthForm.count) } },
-      offspringCount: (parseInt(animal.offspringCount) || 0) + parseInt(birthForm.count)
+      births: { ...births, [birthId]: { ...birthData, count: cnt } },
+      offspringCount: (parseInt(animal.offspringCount, 10) || 0) + cnt
     };
     saveAnimalToFirebase(user.id, birthAnimal.type, birthAnimal.id, updatedAnimal);
+    if (registerLambs) {
+      for (let i = 0; i < cnt; i++) {
+        const l = (lambs || [])[i] || {};
+        const g = l.gender || (birthForm.gender === 'male' ? 'male' : 'female');
+        const lambId = `${birthAnimal.type}-${Date.now()}-${i}`;
+        saveAnimalToFirebase(user.id, birthAnimal.type, lambId, {
+          ...EMPTY_FORM, number: `${animal.number}-${i + 1}`, gender: g, birthDate: birthForm.date, status: 'active',
+          tagColor: l.tagNo && lambCol ? lambCol.id : '', tagNo: l.tagNo ? String(l.tagNo) : '',
+          motherNumber: String(animal.number), motherId: birthAnimal.id, notes: birthForm.notes || ''
+        });
+      }
+    }
     setShowBirthModal(false);
     setBirthForm({ date: new Date().toISOString().split('T')[0], count: 1, gender: 'mixed', notes: '' });
     alert('✓ تم تسجيل الولادة بنجاح!');
@@ -810,10 +2362,10 @@ const App = () => {
 
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/vetDrugNames`), (snap) => { if (snap.exists()) setDrugNames(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/vetPurchases`), (snap) => { if (snap.exists()) setVetPurchases(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/vetWithdrawals`), (snap) => { if (snap.exists()) setVetWithdrawals(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/silencedMedAlerts`), (snap) => { if (snap.exists()) setSilencedMedAlerts(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/vetDrugNames`), (snap) => { if (snap.exists()) setDrugNames(snap.val()); });
+    onValue(ref(database, `users/${user.id}/vetPurchases`), (snap) => { if (snap.exists()) setVetPurchases(snap.val()); });
+    onValue(ref(database, `users/${user.id}/vetWithdrawals`), (snap) => { if (snap.exists()) setVetWithdrawals(snap.val()); });
+    onValue(ref(database, `users/${user.id}/silencedMedAlerts`), (snap) => { if (snap.exists()) setSilencedMedAlerts(snap.val()); });
   }, [user]);
 
   // حساب المخزون الفعلي لكل دواء (مشتريات - سحوبات)
@@ -902,11 +2454,11 @@ const App = () => {
   useEffect(() => {
     if (!user) return;
     const vetRef = ref(database, `users/${user.id}/vetMedicines`);
-    onValue(vetRef, (snap) => { if (snap.exists()) { setMedicines(snap.val()); } }, { onlyOnce: true });
+    onValue(vetRef, (snap) => { if (snap.exists()) { setMedicines(snap.val()); } });
     const treatRef = ref(database, `users/${user.id}/vetTreatments`);
-    onValue(treatRef, (snap) => { if (snap.exists()) { setTreatmentRecords(snap.val()); } }, { onlyOnce: true });
+    onValue(treatRef, (snap) => { if (snap.exists()) { setTreatmentRecords(snap.val()); } });
     const expRef = ref(database, `users/${user.id}/vetExperiences`);
-    onValue(expRef, (snap) => { if (snap.exists()) { setExperiences(snap.val()); } }, { onlyOnce: true });
+    onValue(expRef, (snap) => { if (snap.exists()) { setExperiences(snap.val()); } });
   }, [user]);
 
   // حساب الأيام المتبقية على انتهاء الدواء
@@ -1030,8 +2582,8 @@ const App = () => {
   // تحميل بيانات المواطير من Firebase
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/pumps`), (snap) => { if (snap.exists()) setPumps(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/pumpBrands`), (snap) => { if (snap.exists()) setPumpBrands(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/pumps`), (snap) => { if (snap.exists()) setPumps(snap.val()); });
+    onValue(ref(database, `users/${user.id}/pumpBrands`), (snap) => { if (snap.exists()) setPumpBrands(snap.val()); });
   }, [user]);
 
   // ===== دوال البنزين =====
@@ -1043,7 +2595,7 @@ const App = () => {
 
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/petrolRecords`), (snap) => { if (snap.exists()) setPetrolRecords(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/petrolRecords`), (snap) => { if (snap.exists()) setPetrolRecords(snap.val()); });
   }, [user]);
 
   const petrolStats = useMemo(() => {
@@ -1116,9 +2668,9 @@ const App = () => {
 
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/pumpMaintenance`), (snap) => { if (snap.exists()) setPumpMaintenance(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/solarMaintenance`), (snap) => { if (snap.exists()) setSolarMaintenance(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/farmMaintenance`), (snap) => { if (snap.exists()) setFarmMaintenance(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/pumpMaintenance`), (snap) => { if (snap.exists()) setPumpMaintenance(snap.val()); });
+    onValue(ref(database, `users/${user.id}/solarMaintenance`), (snap) => { if (snap.exists()) setSolarMaintenance(snap.val()); });
+    onValue(ref(database, `users/${user.id}/farmMaintenance`), (snap) => { if (snap.exists()) setFarmMaintenance(snap.val()); });
   }, [user]);
 
   // أيام حتى الصيانة القادمة
@@ -1296,9 +2848,9 @@ const App = () => {
   // تحميل بيانات الأعلاف من Firebase
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/feeds`), (snap) => { if (snap.exists()) setFeeds(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/feedPurchases`), (snap) => { if (snap.exists()) setFeedPurchases(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/feedConsumption`), (snap) => { if (snap.exists()) setFeedConsumption(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/feeds`), (snap) => { if (snap.exists()) setFeeds(snap.val()); });
+    onValue(ref(database, `users/${user.id}/feedPurchases`), (snap) => { if (snap.exists()) setFeedPurchases(snap.val()); });
+    onValue(ref(database, `users/${user.id}/feedConsumption`), (snap) => { if (snap.exists()) setFeedConsumption(snap.val()); });
   }, [user]);
 
   // حساب الاستهلاك اليومي الكلي لكل علف بناءً على عدد الحيوانات
@@ -1581,10 +3133,10 @@ const App = () => {
   // تحميل بيانات الطاقة من Firebase
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/solarBatteries`), (snap) => { if (snap.exists()) setBatteries(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/batteryLocations`), (snap) => { if (snap.exists()) setBatteryLocations(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/solarPanels`), (snap) => { if (snap.exists()) setPanels(snap.val()); }, { onlyOnce: true });
-    onValue(ref(database, `users/${user.id}/solarInverters`), (snap) => { if (snap.exists()) setInverters(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/solarBatteries`), (snap) => { if (snap.exists()) setBatteries(snap.val()); });
+    onValue(ref(database, `users/${user.id}/batteryLocations`), (snap) => { if (snap.exists()) setBatteryLocations(snap.val()); });
+    onValue(ref(database, `users/${user.id}/solarPanels`), (snap) => { if (snap.exists()) setPanels(snap.val()); });
+    onValue(ref(database, `users/${user.id}/solarInverters`), (snap) => { if (snap.exists()) setInverters(snap.val()); });
   }, [user]);
 
   // حساب الأيام المتبقية من تاريخ بداية
@@ -1686,7 +3238,7 @@ const App = () => {
 
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/gasCylinders`), (snap) => { if (snap.exists()) setGasCylinders(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/gasCylinders`), (snap) => { if (snap.exists()) setGasCylinders(snap.val()); });
   }, [user]);
 
   // حساب معدل الاستهلاك (أيام بين التعبئات)
@@ -1879,10 +3431,28 @@ const App = () => {
         alerts.push({ id: `farmmaint-${rec.id}`, system: '🏗️ صيانة المزرعة', item: rec.title, msg: d === 0 ? 'موعد الصيانة اليوم!' : `موعد الصيانة خلال ${d} يوم`, urgency: d === 0 ? 'critical' : d <= 3 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setShowFarmMaintSystem(true); } });
     });
 
+    // 📅 المهام والتذكيرات
+    tasks.filter(tk => tk.active !== false && tk.due).forEach(tk => {
+      const d = daysDiff(tk.due);
+      if (d !== null && d <= 3)
+        alerts.push({ id: `task-${tk.id}`, system: '📅 المهام والتذكيرات', item: tk.title, msg: d < 0 ? `متأخرة ${-d} يوم` : d === 0 ? 'موعدها اليوم' : `بعد ${d} يوم`, urgency: d <= 0 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setActivePage('tasks'); } });
+    });
+
+    // 🕌 عيد الأضحى
+    const eidDays = Math.round((eidDate.getTime() - todayStart().getTime()) / 86400000);
+    if (eidDays >= 0 && eidDays <= 60) {
+      let okN = 0; let noN = 0;
+      flattenAnimals(animals).filter(isActiveAnimal).forEach(a => {
+        const info = udhiyahInfo(a, eidDate, settings);
+        if (info) { if (info.eligible) okN++; else noN++; }
+      });
+      alerts.push({ id: 'eid-soon', system: '🕌 عيد الأضحى', item: eidDays === 0 ? 'اليوم' : `بعد ${eidDays} يوم`, msg: `${okN} رأس يضحي يوم العيد، و ${noN} رأس لا يبلغ العمر المطلوب`, urgency: eidDays <= 14 ? 'high' : 'medium', action: () => { setShowAlertsCenter(false); setActivePage('udhiyah'); } });
+    }
+
     // ترتيب: critical أولاً ثم high ثم medium
     const order = { critical: 0, high: 1, medium: 2 };
     return alerts.sort((a, b) => order[a.urgency] - order[b.urgency]);
-  }, [batteries, inverters, panels, pumps, petrolStats, vetInventory, medicines, feedForecast, smartConsumption, gasSmartAnalysis, pumpMaintenance, solarMaintenance, farmMaintenance]);
+  }, [batteries, inverters, panels, pumps, petrolStats, vetInventory, medicines, feedForecast, smartConsumption, gasSmartAnalysis, pumpMaintenance, solarMaintenance, farmMaintenance, tasks, animals, settings, eidDate]);
 
   const handleSaveCylinder = () => {
     if (!cylinderForm.name) { alert('أدخل اسم الأسطوانة'); return; }
@@ -1933,7 +3503,7 @@ const App = () => {
 
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/workers`), (snap) => { if (snap.exists()) setWorkers(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/workers`), (snap) => { if (snap.exists()) setWorkers(snap.val()); });
   }, [user]);
 
   const handleSaveWorker = () => {
@@ -1973,7 +3543,7 @@ const App = () => {
 
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/workerFoodRecords`), (snap) => { if (snap.exists()) setFoodRecords(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/workerFoodRecords`), (snap) => { if (snap.exists()) setFoodRecords(snap.val()); });
   }, [user]);
 
   const saveManualStockUpdates = useCallback((updated) => {
@@ -1984,7 +3554,7 @@ const App = () => {
 
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/manualStockUpdates`), (snap) => { if (snap.exists()) setManualStockUpdates(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/manualStockUpdates`), (snap) => { if (snap.exists()) setManualStockUpdates(snap.val()); });
   }, [user]);
 
   const handleSaveManualUpdate = () => {
@@ -2074,7 +3644,7 @@ const App = () => {
 
   useEffect(() => {
     if (!user) return;
-    onValue(ref(database, `users/${user.id}/studs`), (snap) => { if (snap.exists()) setStuds(snap.val()); }, { onlyOnce: true });
+    onValue(ref(database, `users/${user.id}/studs`), (snap) => { if (snap.exists()) setStuds(snap.val()); });
   }, [user]);
 
   // حساب العداد التنازلي للفحل
@@ -2154,9 +3724,16 @@ const App = () => {
   const handleSaveAnimal = (e) => {
     e.preventDefault();
     if (!animalForm.number) { alert('أدخل رقم الحيوان'); return; }
+    const toSave = { ...animalForm };
+    const defCol = defaultTagColorFor(settings.tagColors, selectedAnimalType);
+    if (toSave.tagNo !== '' && toSave.tagNo !== undefined && !toSave.tagColor && defCol) toSave.tagColor = defCol.id;
+    if (toSave.tagNo !== '' && toSave.tagNo !== undefined && toSave.tagColor && isActiveAnimal(toSave)) {
+      const clash = flattenAnimals(animals).find(x => !(x.type === selectedAnimalType && x.id === editingId) && isActiveAnimal(x) && x.tagColor === toSave.tagColor && String(x.tagNo) === String(toSave.tagNo));
+      if (clash) { alert(`رقم الوسم ${toSave.tagNo} مستخدم لدى الحيوان رقم ${clash.number}`); return; }
+    }
     const animalId = editingId || `${selectedAnimalType}-${Date.now()}`;
     if (user && selectedAnimalType) {
-      saveAnimalToFirebase(user.id, selectedAnimalType, animalId, animalForm);
+      saveAnimalToFirebase(user.id, selectedAnimalType, animalId, toSave);
     }
     setShowModal(false);
     setAnimalForm(EMPTY_FORM);
@@ -2165,13 +3742,13 @@ const App = () => {
   };
 
   const getTypeColor = (type) => {
-    if (type === 'sheep') return '#f9f3f0';
+    if (type === 'sheep') return '#fff8e6';
     if (type === 'goat') return '#f0f9f3';
     return '#f5f5f5';
   };
 
   const getTypeTextColor = (type) => {
-    if (type === 'sheep') return '#8B4513';
+    if (type === 'sheep') return '#9a6b00';
     if (type === 'goat') return '#228B22';
     return '#333';
   };
@@ -2200,15 +3777,15 @@ const App = () => {
   // شاشة الدخول
   if (!user) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1d4a3d 0%, #14352c 100%)' }}>
         <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '500px', width: '90%' }}>
-          <h1 style={{ color: '#3D2817', textAlign: 'center', marginBottom: '30px' }}>🐑 FarmHub Pro</h1>
+          <h1 style={{ color: '#14352c', textAlign: 'center', marginBottom: '30px' }}>🐑 FarmHub Pro</h1>
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>دخول</h2>
+            <h2 style={{ color: '#14352c', marginBottom: '20px' }}>دخول</h2>
             {loginError && <div style={{ color: '#e74c3c', background: '#ffe8e8', padding: '10px', borderRadius: '6px', fontSize: '13px' }}>{loginError}</div>}
             <input type="email" placeholder="البريد الإلكتروني" value={loginData.email} onChange={(e) => setLoginData(p => ({ ...p, email: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
             <input type="password" placeholder="الباسورد" value={loginData.password} onChange={(e) => setLoginData(p => ({ ...p, password: e.target.value }))} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px' }} />
-            <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button>
+            <button type="submit" style={{ background: '#2c7a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>دخول</button>
             <p style={{ color: '#666', fontSize: '12px', textAlign: 'center' }}>لا تملك حساب؟ ادخل بريدك الجديد للتسجيل التلقائي</p>
           </form>
         </div>
@@ -2219,7 +3796,7 @@ const App = () => {
   // شاشة تحميل Firebase
   if (!firebaseReady) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1d4a3d 0%, #14352c 100%)' }}>
         <div style={{ color: 'white', textAlign: 'center', fontSize: '18px' }}>
           <div style={{ fontSize: '40px', marginBottom: '20px' }}>🐑</div>
           <div>جاري تحميل البيانات...</div>
@@ -2231,9 +3808,9 @@ const App = () => {
   // شاشة اختيار النوع
   if (!selectedAnimalType) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #5D4E37 0%, #3D2817 100%)' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1d4a3d 0%, #14352c 100%)' }}>
         <div style={{ background: 'white', padding: '40px', borderRadius: '12px', maxWidth: '600px', width: '90%', textAlign: 'center' }}>
-          <h1 style={{ color: '#3D2817', marginBottom: '30px' }}>🐑 اختر نوع الحيوان</h1>
+          <h1 style={{ color: '#14352c', marginBottom: '30px' }}>🐑 اختر نوع الحيوان</h1>
           <div style={{ display: 'grid', gridTemplateColumns: animalTypes.length > 2 ? '1fr 1fr' : '1fr', gap: '15px', marginBottom: '30px' }}>
             {animalTypes.map(type => (
               <div key={type} style={{ position: 'relative' }}>
@@ -2242,7 +3819,7 @@ const App = () => {
                   <div style={{ position: 'absolute', top: '5px', left: '5px', display: 'flex', gap: '4px', zIndex: 10 }}>
                     <button
                       onClick={(e) => { e.stopPropagation(); setEditingType(type); setEditTypeName(type); }}
-                      style={{ background: '#F5D547', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', padding: '3px 6px', fontWeight: 'bold' }}
+                      style={{ background: '#e9b949', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', padding: '3px 6px', fontWeight: 'bold' }}
                       title="تعديل الاسم"
                     >✏️</button>
                     <button
@@ -2261,8 +3838,8 @@ const App = () => {
 
           {/* Modal تعديل اسم النوع */}
           {editingType && (
-            <div style={{ background: '#fff3cd', padding: '20px', borderRadius: '8px', marginBottom: '15px', border: '2px solid #F5D547' }}>
-              <p style={{ fontWeight: 'bold', marginBottom: '10px', color: '#3D2817' }}>✏️ تعديل اسم "{editingType}"</p>
+            <div style={{ background: '#fff3cd', padding: '20px', borderRadius: '8px', marginBottom: '15px', border: '2px solid #e9b949' }}>
+              <p style={{ fontWeight: 'bold', marginBottom: '10px', color: '#14352c' }}>✏️ تعديل اسم "{editingType}"</p>
               <input
                 type="text"
                 value={editTypeName}
@@ -2271,19 +3848,19 @@ const App = () => {
                 style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', marginBottom: '10px', fontSize: '14px' }}
               />
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={handleRenameType} style={{ flex: 1, background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>حفظ</button>
+                <button onClick={handleRenameType} style={{ flex: 1, background: '#2c7a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>حفظ</button>
                 <button onClick={() => { setEditingType(null); setEditTypeName(''); }} style={{ flex: 1, background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
               </div>
             </div>
           )}
-          <button onClick={() => setShowAddType(true)} style={{ width: '100%', padding: '15px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '10px', fontSize: '14px' }}>
+          <button onClick={() => setShowAddType(true)} style={{ width: '100%', padding: '15px', background: '#e9b949', color: '#14352c', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '10px', fontSize: '14px' }}>
             ➕ إضافة نوع جديد
           </button>
           {showAddType && (
-            <div style={{ background: '#f9f7f4', padding: '20px', borderRadius: '8px', marginBottom: '15px' }}>
+            <div style={{ background: '#f2f6f3', padding: '20px', borderRadius: '8px', marginBottom: '15px' }}>
               <input type="text" placeholder="مثال: بقر، طيور، إبل، خيل..." value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAddType()} style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', marginBottom: '10px', fontSize: '14px' }} />
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={handleAddType} style={{ flex: 1, background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إضافة</button>
+                <button onClick={handleAddType} style={{ flex: 1, background: '#2c7a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إضافة</button>
                 <button onClick={() => { setShowAddType(false); setNewTypeName(''); }} style={{ flex: 1, background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
               </div>
             </div>
@@ -2296,160 +3873,164 @@ const App = () => {
     );
   }
 
-  // صفحة Dashboard
-  if (showDashboard) {
-    let allAnimals = [];
-    Object.entries(animals).forEach(([type, typeAnimals]) => {
-      if (typeAnimals && typeof typeAnimals === 'object') {
-        Object.entries(typeAnimals).forEach(([id, data]) => allAnimals.push({ id, type, ...data }));
-      }
-    });
-    const totalStats = {
-      total: allAnimals.length,
-      active: allAnimals.filter(a => a.status === 'active').length,
-      sick: allAnimals.filter(a => a.healthStatus === 'sick').length,
-      sold: allAnimals.filter(a => a.status === 'sold').length,
-      freezer: allAnimals.filter(a => a.slaughterLocation === 'freezer').length,
+  // ===== التنقل والقائمة الجانبية (v2) =====
+  const handleNav = (key) => {
+    setSidebarOpen(false);
+    const modalKeys = {
+      alerts: () => setShowAlertsCenter(true), age: () => setShowAgeReport(true), numbers: () => setShowNumbersReport(true),
+      sales: () => setShowSalesReport(true), production: () => setShowProductionReport(true), studs: () => setShowStudSystem(true),
+      feeds: () => setShowFeedSystem(true), vet: () => setShowVetLibrary(true), workers: () => setShowWorkersSystem(true),
+      pumps: () => setShowPumpSystem(true), solar: () => setShowSolarSystem(true), gas: () => setShowGasSystem(true),
+      farmmaint: () => setShowFarmMaintSystem(true), password: () => setShowChangePassword(true), admin: () => setShowAdminPanel(true)
     };
+    if (key === 'dash') { setActivePage(''); setShowDashboard(true); return; }
+    if (key === 'herd') { setActivePage(''); setShowDashboard(false); return; }
+    if (key === 'switch') { setActivePage(''); setSelectedAnimalType(null); return; }
+    if (modalKeys[key]) { setActivePage(''); modalKeys[key](); return; }
+    setActivePage(key);
+  };
+
+  const openAddAnimal = () => {
+    const col = defaultTagColorFor(settings.tagColors, selectedAnimalType);
+    setAnimalForm({ ...EMPTY_FORM, birthDate: toISO(new Date()), tagColor: col ? col.id : '' });
+    setEditingId(null);
+    setShowModal(true);
+  };
+
+  const updateLamb = (i, patch) => setBirthForm(p => {
+    const arr = [...(p.lambs || [])];
+    while (arr.length <= i) arr.push({});
+    arr[i] = { ...arr[i], ...patch };
+    return { ...p, lambs: arr };
+  });
+
+  const udhiyahBadge = (animal) => {
+    if (!isActiveAnimal(animal)) return <span style={{ color: '#aaa' }}>-</span>;
+    const info = udhiyahInfo({ ...animal, type: selectedAnimalType }, eidDate, settings);
+    if (!info) return <span style={{ color: '#aaa' }}>-</span>;
     return (
-      <div style={{ minHeight: '100vh', background: '#f9f7f4' }}>
-        <style>{mobileCSS}</style>
+      <span title={`عمره يوم العيد: ${ageText(info.ageAtEid)}`} style={{ display: 'inline-block', background: info.eligible ? '#e6f4ea' : '#fdecea', color: info.eligible ? '#1e7a46' : '#b3382f', fontWeight: 'bold', fontSize: '11px', padding: '3px 9px', borderRadius: '12px', lineHeight: 1.5 }}>
+        {info.eligible ? '✓ يضحي' : '✗ لا يضحي'}
+        <span style={{ display: 'block', fontSize: '10px', fontWeight: 'normal' }}>{ageText(info.ageAtEid)}</span>
+      </span>
+    );
+  };
 
-        {/* شريط علوي للموبايل */}
-        {isMobile && (
-          <div style={{ background: 'linear-gradient(90deg, #5D4E37, #3D2817)', padding: '12px 15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 200 }}>
-            <span style={{ color: '#F5D547', fontWeight: 'bold', fontSize: '18px' }}>🐑 FarmHub</span>
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: 'none', border: '2px solid #F5D547', color: '#F5D547', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', fontSize: '18px' }}>☰</button>
-          </div>
-        )}
+  const navGroups = [
+    { title: 'الرئيسية', items: [
+      { key: 'dash', icon: '🏠', label: 'لوحة القيادة', active: showDashboard && !activePage },
+      { key: 'herd', icon: '🐑', label: 'سجل القطيع', active: !showDashboard && !activePage },
+      { key: 'alerts', icon: '🚨', label: 'التنبيهات', badge: allAlerts.length },
+      { key: 'tasks', icon: '📅', label: 'المهام والتذكيرات', active: activePage === 'tasks' }
+    ] },
+    { title: 'القطيع والتقارير', items: [
+      { key: 'tags', icon: '🏷️', label: 'سجل الأوسمة', active: activePage === 'tags' },
+      { key: 'udhiyah', icon: '🕌', label: 'تقرير الأضاحي', active: activePage === 'udhiyah' },
+      { key: 'reports', icon: '📑', label: 'مركز التقارير', active: activePage === 'reports' },
+      { key: 'age', icon: '👴', label: 'تقرير العويد' },
+      { key: 'numbers', icon: '🔢', label: 'تقرير الأرقام' },
+      { key: 'production', icon: '📈', label: 'تقرير الإنتاج' },
+      { key: 'studs', icon: '🐏', label: 'إدارة الفحول' },
+      { key: 'sales', icon: '💰', label: 'المبيعات والأرباح' }
+    ] },
+    { title: 'المخزون والصحة', items: [
+      { key: 'feeds', icon: '🌾', label: 'إدارة الأعلاف' },
+      { key: 'vet', icon: '🩺', label: 'المكتبة البيطرية' },
+      { key: 'feedcalc', icon: '🧮', label: 'حاسبة العليقة والتسمين', active: activePage === 'feedcalc' }
+    ] },
+    { title: 'المزرعة والمعدات', items: [
+      { key: 'workers', icon: '👷', label: 'إدارة العمال' },
+      { key: 'pumps', icon: '⚙️', label: 'مراقبة المواطير' },
+      { key: 'solar', icon: '☀️', label: 'الطاقة الشمسية' },
+      { key: 'gas', icon: '🔵', label: 'مراقبة الغاز' },
+      { key: 'farmmaint', icon: '🏗️', label: 'صيانة المزرعة' }
+    ] }
+  ];
 
-        <div style={{ display: 'flex', minHeight: isMobile ? 'calc(100vh - 50px)' : '100vh' }}>
-          {/* Sidebar */}
-          {(!isMobile || sidebarOpen) && (
-            <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', width: isMobile ? '100%' : '260px', minWidth: isMobile ? 'unset' : '260px', overflowY: 'auto', position: isMobile ? 'relative' : 'fixed', height: isMobile ? 'auto' : '100vh', top: 0, left: 0, zIndex: 100 }}>
-              {!isMobile && <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>}
-              <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '5px' }}>مرحباً {user.name}</p>
-              <button onClick={() => { setShowDashboard(false); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>← رجوع</button>
-              <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
-                <button onClick={() => setShowChangePassword(true)} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
-                <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>تسجيل الخروج</button>
-              </div>
-            </div>
-          )}
-
-          {/* المحتوى */}
-          <div style={{ flex: 1, padding: isMobile ? '15px' : '30px', overflowY: 'auto', marginLeft: isMobile ? 0 : '260px' }}>
-            <h1 style={{ marginBottom: '20px', color: '#3D2817', fontSize: isMobile ? '18px' : '24px' }}>📊 ملخص الإحصائيات الشاملة</h1>
-            <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
-              {[
-                { val: totalStats.total, label: '🐑 الإجمالي', color: '#3D2817' },
-                { val: totalStats.active, label: '✓ النشطة', color: '#27ae60' },
-                { val: totalStats.sick, label: '⚠️ المريضة', color: '#e74c3c' },
-                { val: totalStats.sold, label: '💰 المباع', color: '#3498db' },
-                { val: totalStats.freezer, label: '❄️ الثلاجة', color: '#2980b9' },
-              ].map(s => (
-                <div key={s.label} style={{ textAlign: 'center', padding: '12px', background: '#f9f7f4', borderRadius: '8px' }}>
-                  <div style={{ fontSize: '22px', fontWeight: 'bold', color: s.color }}>{s.val}</div>
-                  <div style={{ color: s.color, fontSize: '12px', marginTop: '4px' }}>{s.label}</div>
-                </div>
-              ))}
-            </div>
-            <h2 style={{ marginBottom: '15px', color: '#3D2817', fontSize: isMobile ? '15px' : '20px' }}>📈 توزيع الحيوانات حسب النوع</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(250px, 1fr))', gap: '15px' }}>
-              {Object.keys(animals).map(type => {
-                const ta = animals[type] || {};
-                return (
-                  <div key={type} style={{ background: 'white', padding: '15px', borderRadius: '8px', border: '2px solid #ddd' }}>
-                    <h3 style={{ color: '#3D2817', marginBottom: '10px' }}>{type === 'sheep' ? '🐑 الضان' : type === 'goat' ? '🐐 الماعز' : `🐄 ${type}`}</h3>
-                    <div style={{ fontSize: '13px', lineHeight: '1.8', color: '#555' }}>
-                      <div>📊 الإجمالي: <strong>{Object.keys(ta).length}</strong></div>
-                      <div>✓ النشطة: <strong style={{ color: '#27ae60' }}>{Object.values(ta).filter(a => a.status === 'active').length}</strong></div>
-                      <div>⚠️ المريضة: <strong style={{ color: '#e74c3c' }}>{Object.values(ta).filter(a => a.healthStatus === 'sick').length}</strong></div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+  const renderSidebar = () => (
+    <div style={{ background: 'linear-gradient(180deg, #1d4a3d 0%, #14352c 100%)', padding: '18px 12px', width: isMobile ? '100%' : '260px', minWidth: isMobile ? 'unset' : '260px', overflowY: 'auto', position: isMobile ? 'relative' : 'fixed', height: isMobile ? 'auto' : '100vh', top: 0, left: 0, zIndex: 100, color: 'white' }}>
+      {!isMobile && (
+        <div style={{ textAlign: 'center', marginBottom: '14px' }}>
+          <div style={{ fontSize: '26px', fontWeight: 800, color: T.gold, letterSpacing: '0.5px' }}>🐑 FarmHub Pro</div>
+        </div>
+      )}
+      <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: T.gold, color: T.dark, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '16px', flexShrink: 0 }}>{(user.name || '؟').charAt(0).toUpperCase()}</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 'bold', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
+          <div style={{ fontSize: '11px', opacity: 0.75 }}>{user.role === 'admin' ? '👑 مشرف' : '👤 مستخدم'} · {selectedAnimalType === 'sheep' ? '🐑 ضان' : selectedAnimalType === 'goat' ? '🐐 ماعز' : selectedAnimalType}</div>
         </div>
       </div>
-    );
-  }
+      {navGroups.map(g => (
+        <div key={g.title} style={{ marginBottom: '10px' }}>
+          <div style={{ fontSize: '10px', letterSpacing: '1px', opacity: 0.55, padding: '4px 10px' }}>{g.title}</div>
+          {g.items.map(it => (
+            <button key={it.key} className="fh-nav" onClick={() => handleNav(it.key)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', background: it.active ? 'rgba(255,255,255,0.16)' : 'transparent', color: 'white', border: 'none', borderRight: it.active ? `3px solid ${T.gold}` : '3px solid transparent', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: it.active ? 800 : 500, textAlign: 'right', marginBottom: '2px' }}>
+              <span style={{ fontSize: '16px', width: '22px', textAlign: 'center' }}>{it.icon}</span>
+              <span style={{ flex: 1 }}>{it.label}</span>
+              {it.badge > 0 && <span style={{ background: '#e74c3c', color: 'white', borderRadius: '10px', minWidth: '20px', height: '20px', padding: '0 6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 'bold' }}>{it.badge}</span>}
+            </button>
+          ))}
+        </div>
+      ))}
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 10px', marginBottom: '6px' }}>
+          <span style={{ fontSize: '12px', opacity: 0.8, flex: 1 }}>🔤 حجم الخط</span>
+          <button onClick={() => changeFont(-0.05)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', borderRadius: '8px', width: '32px', height: '28px', cursor: 'pointer', fontWeight: 'bold' }}>A-</button>
+          <button onClick={() => changeFont(0.05)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', borderRadius: '8px', width: '32px', height: '28px', cursor: 'pointer', fontWeight: 'bold' }}>A+</button>
+        </div>
+        <button className="fh-nav" onClick={() => handleNav('switch')} style={{ width: '100%', display: 'flex', gap: '10px', padding: '9px 10px', background: 'transparent', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', textAlign: 'right' }}><span style={{ width: '22px', textAlign: 'center' }}>↩️</span>تغيير النوع</button>
+        <button className="fh-nav" onClick={() => handleNav('password')} style={{ width: '100%', display: 'flex', gap: '10px', padding: '9px 10px', background: 'transparent', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', textAlign: 'right' }}><span style={{ width: '22px', textAlign: 'center' }}>🔐</span>تغيير كلمة المرور</button>
+        {user.role === 'admin' && (
+          <button className="fh-nav" onClick={() => handleNav('admin')} style={{ width: '100%', display: 'flex', gap: '10px', padding: '9px 10px', background: 'transparent', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', textAlign: 'right' }}><span style={{ width: '22px', textAlign: 'center' }}>👑</span>إدارة المستخدمين</button>
+        )}
+        <button onClick={handleLogout} style={{ width: '100%', marginTop: '8px', padding: '9px', color: '#ff9b93', background: 'transparent', border: '1px solid rgba(255,155,147,0.5)', cursor: 'pointer', borderRadius: '10px', fontSize: '13px', fontWeight: '600' }}>تسجيل الخروج</button>
+      </div>
+    </div>
+  );
 
   // الصفحة الرئيسية
   return (
-    <div style={{ minHeight: '100vh', background: '#f9f7f4' }}>
+    <div style={{ minHeight: '100vh', background: T.bg }}>
       <style>{mobileCSS}</style>
 
       {/* شريط علوي للموبايل */}
       {isMobile && (
-        <div style={{ background: 'linear-gradient(90deg, #5D4E37, #3D2817)', padding: '12px 15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 200 }}>
-          <span style={{ color: '#F5D547', fontWeight: 'bold', fontSize: '16px' }}>
-            🐑 {selectedAnimalType === 'sheep' ? 'الضان' : selectedAnimalType === 'goat' ? 'الماعز' : selectedAnimalType}
-          </span>
-          <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: 'none', border: '2px solid #F5D547', color: '#F5D547', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', fontSize: '18px' }}>☰</button>
+        <div style={{ background: `linear-gradient(90deg, ${T.mid}, ${T.dark})`, padding: '12px 15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 200 }}>
+          <span style={{ color: T.gold, fontWeight: 800, fontSize: '17px' }}>🐑 FarmHub Pro</span>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button onClick={() => handleNav('alerts')} style={{ background: allAlerts.length > 0 ? '#c0392b' : 'rgba(255,255,255,0.15)', border: 'none', color: 'white', borderRadius: '10px', padding: '6px 10px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}>🚨 {allAlerts.length}</button>
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', borderRadius: '10px', padding: '6px 12px', cursor: 'pointer', fontSize: '18px' }}>{sidebarOpen ? '✕' : '☰'}</button>
+          </div>
         </div>
       )}
 
       <div style={{ display: 'flex', minHeight: isMobile ? 'calc(100vh - 50px)' : '100vh' }}>
 
         {/* Sidebar */}
-        {(!isMobile || sidebarOpen) && (
-          <div style={{ background: 'linear-gradient(180deg, #5D4E37 0%, #3D2817 100%)', padding: '25px 15px', width: isMobile ? '100%' : '260px', minWidth: isMobile ? 'unset' : '260px', overflowY: 'auto', position: isMobile ? 'relative' : 'fixed', height: isMobile ? 'auto' : '100vh', top: 0, left: 0, zIndex: 100 }}>
-            {!isMobile && <div style={{ color: '#F5D547', fontSize: '26px', fontWeight: 'bold', marginBottom: '30px', textAlign: 'center' }}>🐑 FarmHub</div>}
-            <p style={{ color: '#E8D5C4', fontSize: '12px', textAlign: 'center', marginBottom: '5px' }}>مرحباً {user.name}</p>
-            <p style={{ color: '#F5D547', fontSize: '11px', textAlign: 'center', marginBottom: '10px', background: user.role === 'admin' ? '#8B6F47' : 'transparent', padding: '5px', borderRadius: '4px' }}>
-              {user.role === 'admin' ? '👑 مشرف' : '👤 مستخدم'}
-            </p>
-            <p style={{ color: '#E8D5C4', fontSize: '11px', textAlign: 'center', marginBottom: '20px', background: '#5D4E37', padding: '8px', borderRadius: '4px', fontWeight: 'bold' }}>
-              {selectedAnimalType === 'sheep' ? '🐑 الضان' : selectedAnimalType === 'goat' ? '🐐 الماعز' : selectedAnimalType}
-            </p>
-            <button onClick={() => { setShowDashboard(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📊 ملخص الإحصائيات</button>
-            {/* زر التنبيهات المركزية */}
-            <button onClick={() => { setShowAlertsCenter(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: allAlerts.length > 0 ? '#c0392b' : '#7f8c8d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', animation: allAlerts.filter(a=>a.urgency==='critical').length > 0 ? 'none' : 'none' }}>
-              🚨 التنبيهات المركزية
-              {allAlerts.length > 0 && <span style={{ background: 'white', color: '#c0392b', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 'bold', flexShrink: 0 }}>{allAlerts.length}</span>}
-            </button>
-            <button onClick={() => { setShowAgeReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👴 تقرير العويد</button>
-            <button onClick={() => { setShowNumbersReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2471a3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔢 تقرير الأرقام</button>
-            <button onClick={() => { setShowSalesReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#d4ac0d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>💰 المبيعات والأرباح</button>
-            <button onClick={() => { setShowFeedSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6e4b1f', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🌾 إدارة الأعلاف</button>
-            <button onClick={() => { setShowVetLibrary(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#117a65', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🩺 المكتبة البيطرية</button>
-            <button onClick={() => { setShowWorkersSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#784212', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👷 إدارة العمال</button>
-            <button onClick={() => { setShowProductionReport(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#c0392b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>📈 تقرير الإنتاج</button>
-            <button onClick={() => { setShowStudSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#6d4c41', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🐏 إدارة الفحول</button>
-            <button onClick={() => { setShowPumpSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1c2833', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>⚙️ مراقبة المواطير</button>
-            <button onClick={() => { setShowSolarSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#1a6b3c', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>☀️ الطاقة الشمسية</button>
-            <button onClick={() => { setShowGasSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#2e4057', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔵 مراقبة الغاز</button>
-            <button onClick={() => { setShowFarmMaintSystem(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#515a5a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🏗️ صيانة المزرعة</button>
-            <button onClick={() => { setSelectedAnimalType(null); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '20px' }}>↩️ تغيير النوع</button>
-            <div style={{ borderTop: '1px solid #8B6F47', paddingTop: '15px' }}>
-              <button onClick={() => { setShowChangePassword(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#F5D547', color: '#3D2817', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>🔐 تغيير المرور</button>
-              {user.role === 'admin' && (
-                <button onClick={() => { setShowAdminPanel(true); setSidebarOpen(false); }} style={{ width: '100%', padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginBottom: '10px' }}>👑 إدارة المستخدمين</button>
-              )}
-              <button onClick={handleLogout} style={{ width: '100%', padding: '10px', color: '#e74c3c', background: 'transparent', border: '1px solid #e74c3c', cursor: 'pointer', borderRadius: '6px', fontSize: '12px', fontWeight: '600' }}>تسجيل الخروج</button>
-            </div>
-          </div>
-        )}
+        {(!isMobile || sidebarOpen) && renderSidebar()}
 
         {/* المحتوى الرئيسي */}
         {(!isMobile || !sidebarOpen) && (
-          <div style={{ flex: 1, overflowY: 'auto', background: '#f9f7f4', padding: isMobile ? '15px' : '30px', marginLeft: isMobile ? 0 : '260px' }}>
-            <h1 style={{ marginBottom: '15px', color: '#3D2817', fontSize: isMobile ? '18px' : '24px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', background: T.bg, padding: isMobile ? '15px' : '30px', marginLeft: isMobile ? 0 : '260px', zoom: fontScale }}>
+            {showDashboard ? (
+              <HomeDashboard animals={animals} settings={settings} allAlerts={allAlerts} tasks={tasks} smartConsumption={smartConsumption} userName={user.name} onNav={handleNav} onAddAnimal={openAddAnimal} />
+            ) : (
+              <>
+            <h1 style={{ marginBottom: '15px', color: '#14352c', fontSize: isMobile ? '18px' : '24px' }}>
               {selectedAnimalType === 'sheep' ? '🐑 إدارة الضان' : selectedAnimalType === 'goat' ? '🐐 إدارة الماعز' : `🐄 إدارة ${selectedAnimalType}`}
             </h1>
 
             {/* الإحصائيات */}
             <div style={{ background: 'white', padding: '12px 15px', borderRadius: '8px', marginBottom: '15px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '8px', textAlign: 'center' }}>
               {[
-                { val: typeCount.total, label: 'الإجمالي', icon: '🐑', color: '#3D2817' },
+                { val: typeCount.total, label: 'الإجمالي', icon: '🐑', color: '#14352c' },
                 { val: typeCount.active, label: 'النشطة', icon: '✓', color: '#27ae60' },
                 { val: typeCount.sick, label: 'المريضة', icon: '⚠️', color: '#e74c3c' },
                 { val: typeCount.sold, label: 'المباع', icon: '💰', color: '#3498db' },
                 { val: typeCount.freezer, label: 'الثلاجة', icon: '❄️', color: '#2980b9' },
               ].map(s => (
-                <div key={s.label} style={{ padding: '8px', background: '#f9f7f4', borderRadius: '6px' }}>
+                <div key={s.label} style={{ padding: '8px', background: '#f2f6f3', borderRadius: '6px' }}>
                   <div style={{ fontSize: '18px', fontWeight: 'bold', color: s.color }}>{s.val}</div>
                   <div style={{ fontSize: '11px', color: s.color }}>{s.icon} {s.label}</div>
                 </div>
@@ -2457,8 +4038,8 @@ const App = () => {
             </div>
 
             <button
-              onClick={() => { setAnimalForm(EMPTY_FORM); setEditingId(null); setShowModal(true); }}
-              style={{ marginBottom: '15px', background: '#8B6F47', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px', width: isMobile ? '100%' : 'auto' }}
+              onClick={openAddAnimal}
+              style={{ marginBottom: '15px', background: '#2c7a65', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px', width: isMobile ? '100%' : 'auto' }}
             >
               ➕ إضافة حيوان
             </button>
@@ -2484,9 +4065,11 @@ const App = () => {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '13px' }}>
                         <div><span style={{ color: '#999' }}>الجنس: </span>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</div>
                         <div><span style={{ color: '#999' }}>العمر: </span>{formatAge(animal.birthDate)}</div>
+                        <div><span style={{ color: '#999' }}>الوسم: </span>{animal.tagNo ? <TagChip color={findTagColor(settings.tagColors, animal.tagColor)} no={animal.tagNo} size={26} /> : '-'}</div>
+                        <div><span style={{ color: '#999' }}>الأضحية: </span>{udhiyahBadge(animal)}</div>
                         <div><span style={{ color: '#999' }}>الحالة: </span>
                           <span style={{ color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
-                            {animal.status === 'active' ? '✓ نشط' : animal.status === 'sold' ? '💰 مباع' : '🔪 مذبوح'}
+                            {statusText(animal.status)}
                           </span>
                         </div>
                         <div><span style={{ color: '#999' }}>الصحة: </span>
@@ -2495,7 +4078,7 @@ const App = () => {
                           </span>
                         </div>
                       </div>
-                      {notes !== '-' && <div style={{ marginTop: '8px', fontSize: '12px', color: '#666', background: '#f9f7f4', padding: '6px', borderRadius: '4px' }}>{notes.length > 50 ? notes.substring(0, 50) + '...' : notes}</div>}
+                      {notes !== '-' && <div style={{ marginTop: '8px', fontSize: '12px', color: '#666', background: '#f2f6f3', padding: '6px', borderRadius: '4px' }}>{notes.length > 50 ? notes.substring(0, 50) + '...' : notes}</div>}
                     </div>
                   );
                 })}
@@ -2506,7 +4089,7 @@ const App = () => {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                   <thead>
                     <tr style={{ background: '#f0f0f0', borderBottom: '2px solid #ddd' }}>
-                      {['الرقم', 'الجنس', 'العمر', 'الحالة', 'الصحة', 'ملاحظات', 'الإجراءات'].map(h => (
+                      {['الرقم', 'الوسم', 'الجنس', 'العمر', 'الأضحية', 'الحالة', 'الصحة', 'ملاحظات', 'الإجراءات'].map(h => (
                         <th key={h} style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>{h}</th>
                       ))}
                     </tr>
@@ -2517,10 +4100,12 @@ const App = () => {
                       return (
                         <tr key={animal.id} style={{ borderBottom: '1px solid #eee', background: getTypeColor(selectedAnimalType) }}>
                           <td style={{ padding: '10px', fontWeight: 'bold', color: getTypeTextColor(selectedAnimalType) }}>{animal.number}</td>
+                          <td style={{ padding: '10px' }}>{animal.tagNo ? <TagChip color={findTagColor(settings.tagColors, animal.tagColor)} no={animal.tagNo} size={28} /> : <span style={{ color: '#bbb' }}>-</span>}</td>
                           <td style={{ padding: '10px' }}>{animal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</td>
                           <td style={{ padding: '10px' }}>{formatAge(animal.birthDate)}</td>
+                          <td style={{ padding: '10px' }}>{udhiyahBadge(animal)}</td>
                           <td style={{ padding: '10px', color: animal.status === 'active' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
-                            {animal.status === 'active' ? '✓ نشط' : animal.status === 'sold' ? '💰 مباع' : '🔪 مذبوح'}
+                            {statusText(animal.status)}
                           </td>
                           <td style={{ padding: '10px', color: animal.healthStatus === 'healthy' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
                             {animal.healthStatus === 'healthy' ? '✓ سليمة' : '⚠️ مريضة'}
@@ -2546,6 +4131,8 @@ const App = () => {
                 )}
               </div>
             )}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -2554,7 +4141,7 @@ const App = () => {
       {showModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }} onClick={() => setShowModal(false)}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '700px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>{editingId ? 'تعديل حيوان' : 'تسجيل حيوان جديد'}</h2>
+            <h2 style={{ color: '#14352c', marginBottom: '20px' }}>{editingId ? 'تعديل حيوان' : 'تسجيل حيوان جديد'}</h2>
             <form onSubmit={handleSaveAnimal} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <div>
@@ -2603,12 +4190,40 @@ const App = () => {
                   <textarea value={animalForm.healthNotes} onChange={(e) => handleAnimalChange('healthNotes', e.target.value)} placeholder="مثال: إسهال، عرج، حمى..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', minHeight: '80px', resize: 'vertical', fontFamily: 'inherit' }} />
                 </div>
               )}
+              <div style={{ background: '#eef5f1', borderRadius: '10px', padding: '12px' }}>
+                <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '8px', color: T.dark }}>🏷️ الوسم المعلّق والحظيرة (اختياري)</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>لون الوسم</label>
+                    <select value={animalForm.tagColor || ''} onChange={(e) => handleAnimalChange('tagColor', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }}>
+                      <option value="">بدون</option>
+                      {settings.tagColors.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>رقم الوسم</label>
+                    <input type="number" min="1" value={animalForm.tagNo || ''} onChange={(e) => handleAnimalChange('tagNo', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>الحظيرة</label>
+                    <select value={animalForm.barn || ''} onChange={(e) => handleAnimalChange('barn', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }}>
+                      <option value="">-</option>
+                      {settings.barns.map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ marginTop: '10px' }}>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>رقم الأم (إن وُجد)</label>
+                  <input type="text" value={animalForm.motherNumber || ''} onChange={(e) => handleAnimalChange('motherNumber', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+                </div>
+              </div>
               <div>
                 <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>حالة الحيوان</label>
                 <select value={animalForm.status} onChange={(e) => handleAnimalChange('status', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }}>
                   <option value="active">نشط</option>
                   <option value="sold">مباع</option>
                   <option value="slaughtered">مذبوح</option>
+                  <option value="dead">نافق</option>
                 </select>
               </div>
               {animalForm.status === 'sold' && (
@@ -2635,6 +4250,9 @@ const App = () => {
                       <select value={animalForm.slaughterType} onChange={(e) => handleAnimalChange('slaughterType', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }}>
                         <option value="regular">عادي</option>
                         <option value="charity">صدقة</option>
+                        <option value="udhiyah">أضحية</option>
+                        <option value="aqiqah">عقيقة</option>
+                        <option value="gift">هدية</option>
                       </select>
                     </div>
                   </div>
@@ -2654,12 +4272,24 @@ const App = () => {
                   </div>
                 </>
               )}
+              {animalForm.status === 'dead' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                  <div>
+                    <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>تاريخ النفوق</label>
+                    <input type="date" value={animalForm.deathDate || ''} onChange={(e) => handleAnimalChange('deathDate', e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>سبب النفوق</label>
+                    <input type="text" value={animalForm.deathCause || ''} onChange={(e) => handleAnimalChange('deathCause', e.target.value)} placeholder="مثال: إسهال، ولادة متعسرة" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+                  </div>
+                </div>
+              )}
               <div>
                 <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>ملاحظات عامة</label>
                 <textarea value={animalForm.notes} onChange={(e) => handleAnimalChange('notes', e.target.value)} placeholder="أي ملاحظات إضافية..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', minHeight: '80px', resize: 'vertical', fontFamily: 'inherit' }} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '20px' }}>
-                <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>✓ حفظ</button>
+                <button type="submit" style={{ background: '#2c7a65', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>✓ حفظ</button>
                 <button type="button" onClick={() => setShowModal(false)} style={{ background: '#ddd', color: '#333', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إلغاء</button>
               </div>
             </form>
@@ -2671,7 +4301,27 @@ const App = () => {
       {showDetailModal && selectedAnimal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }} onClick={() => setShowDetailModal(false)}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>📋 تفاصيل الحيوان #{selectedAnimal.number}</h2>
+            <h2 style={{ color: '#14352c', marginBottom: '20px' }}>📋 تفاصيل الحيوان #{selectedAnimal.number}</h2>
+            {(() => {
+              const info = udhiyahInfo({ ...selectedAnimal, type: selectedAnimalType }, eidDate, settings);
+              const col = findTagColor(settings.tagColors, selectedAnimal.tagColor);
+              return (
+                <div style={{ background: '#eef5f1', borderRadius: '10px', padding: '12px', marginBottom: '15px', fontSize: '13px', lineHeight: 1.9 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    {selectedAnimal.tagNo ? <TagChip color={col} no={selectedAnimal.tagNo} size={34} /> : <span style={{ color: '#999' }}>بدون وسم</span>}
+                    {selectedAnimal.barn && <span>🏠 {selectedAnimal.barn}</span>}
+                    {selectedAnimal.motherNumber && <span>👩 الأم #{selectedAnimal.motherNumber}</span>}
+                  </div>
+                  {info && isActiveAnimal(selectedAnimal) && (
+                    <div>
+                      🕌 الأضحية: <b style={{ color: info.eligible ? '#1e7a46' : '#b3382f' }}>{info.eligible ? 'يضحي يوم العيد' : 'لا يضحي'}</b>
+                      <div style={{ fontSize: '12px', color: '#555' }}>عمره يوم العيد ({fmtDate(eidDate)}): {ageText(info.ageAtEid)}{!info.eligible ? ` · ينقصه ${info.shortDays} يوم (يتأهل ${fmtDate(info.eligibleDate)})` : ''}</div>
+                    </div>
+                  )}
+                  {selectedAnimal.status === 'dead' && <div style={{ color: '#b3382f' }}>☠️ نافق {selectedAnimal.deathDate ? fmtDate(pd(selectedAnimal.deathDate)) : ''} {selectedAnimal.deathCause ? `· ${selectedAnimal.deathCause}` : ''}</div>}
+                </div>
+              );
+            })()}
             {selectedAnimal.healthNotes && (
               <div style={{ background: '#ffe8e8', padding: '15px', borderRadius: '8px', marginBottom: '15px' }}>
                 <h3 style={{ color: '#e74c3c', marginBottom: '10px', fontSize: '14px' }}>⚠️ المشاكل الصحية:</h3>
@@ -2687,10 +4337,10 @@ const App = () => {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', padding: '15px 0', borderTop: '1px solid #ddd', marginBottom: '15px' }}>
               <div><span style={{ fontSize: '12px', color: '#999' }}>الجنس:</span><div style={{ fontSize: '14px', fontWeight: 'bold' }}>{selectedAnimal.gender === 'male' ? '🐏 ذكر' : '🐑 أنثى'}</div></div>
               <div><span style={{ fontSize: '12px', color: '#999' }}>العمر:</span><div style={{ fontSize: '14px', fontWeight: 'bold' }}>{formatAge(selectedAnimal.birthDate)}</div></div>
-              <div><span style={{ fontSize: '12px', color: '#999' }}>الحالة:</span><div style={{ fontSize: '14px', fontWeight: 'bold', color: selectedAnimal.status === 'active' ? '#27ae60' : '#e74c3c' }}>{selectedAnimal.status === 'active' ? '✓ نشط' : selectedAnimal.status === 'sold' ? '💰 مباع' : '🔪 مذبوح'}</div></div>
+              <div><span style={{ fontSize: '12px', color: '#999' }}>الحالة:</span><div style={{ fontSize: '14px', fontWeight: 'bold', color: selectedAnimal.status === 'active' ? '#27ae60' : '#e74c3c' }}>{statusText(selectedAnimal.status)}</div></div>
               <div><span style={{ fontSize: '12px', color: '#999' }}>الصحة:</span><div style={{ fontSize: '14px', fontWeight: 'bold', color: selectedAnimal.healthStatus === 'healthy' ? '#27ae60' : '#e74c3c' }}>{selectedAnimal.healthStatus === 'healthy' ? '✓ سليمة' : '⚠️ مريضة'}</div></div>
             </div>
-            <button onClick={() => setShowDetailModal(false)} style={{ width: '100%', background: '#8B6F47', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إغلاق</button>
+            <button onClick={() => setShowDetailModal(false)} style={{ width: '100%', background: '#2c7a65', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إغلاق</button>
           </div>
         </div>
       )}
@@ -2699,13 +4349,13 @@ const App = () => {
       {showChangePassword && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }} onClick={() => setShowChangePassword(false)}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>🔐 تغيير كلمة المرور</h2>
+            <h2 style={{ color: '#14352c', marginBottom: '20px' }}>🔐 تغيير كلمة المرور</h2>
             {passwordError && <div style={{ color: '#e74c3c', background: '#ffe8e8', padding: '12px', borderRadius: '6px', fontSize: '13px', marginBottom: '15px' }}>{passwordError}</div>}
             <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div><label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>كلمة المرور القديمة</label><input type="password" value={passwordData.old} onChange={(e) => setPasswordData(p => ({ ...p, old: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} required /></div>
               <div><label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>كلمة المرور الجديدة</label><input type="password" value={passwordData.new} onChange={(e) => setPasswordData(p => ({ ...p, new: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} required /></div>
               <div><label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>تأكيد كلمة المرور</label><input type="password" value={passwordData.confirm} onChange={(e) => setPasswordData(p => ({ ...p, confirm: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} required /></div>
-              <button type="submit" style={{ background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>تحديث المرور</button>
+              <button type="submit" style={{ background: '#2c7a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>تحديث المرور</button>
             </form>
           </div>
         </div>
@@ -2715,14 +4365,14 @@ const App = () => {
       {showAdminPanel && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }} onClick={() => setShowAdminPanel(false)}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '12px', maxWidth: '500px', width: '100%' }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: '#3D2817', marginBottom: '20px' }}>👑 إدارة المستخدمين</h2>
+            <h2 style={{ color: '#14352c', marginBottom: '20px' }}>👑 إدارة المستخدمين</h2>
             {adminPanelError && <div style={{ color: adminPanelError.includes('✓') ? '#27ae60' : '#e74c3c', background: adminPanelError.includes('✓') ? '#e8f8f5' : '#ffe8e8', padding: '12px', borderRadius: '6px', fontSize: '13px', marginBottom: '15px', whiteSpace: 'pre-line' }}>{adminPanelError}</div>}
-            <form onSubmit={handleAddAdmin} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px', padding: '15px', background: '#f9f7f4', borderRadius: '8px' }}>
-              <h3 style={{ color: '#3D2817', fontSize: '14px' }}>➕ إضافة مشرف جديد</h3>
+            <form onSubmit={handleAddAdmin} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px', padding: '15px', background: '#f2f6f3', borderRadius: '8px' }}>
+              <h3 style={{ color: '#14352c', fontSize: '14px' }}>➕ إضافة مشرف جديد</h3>
               <input type="email" placeholder="البريد الإلكتروني" value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px' }} required />
               <button type="submit" style={{ background: '#27ae60', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إضافة مشرف</button>
             </form>
-            <button onClick={() => setShowAdminPanel(false)} style={{ width: '100%', background: '#8B6F47', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إغلاق</button>
+            <button onClick={() => setShowAdminPanel(false)} style={{ width: '100%', background: '#2c7a65', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إغلاق</button>
           </div>
         </div>
       )}
@@ -2749,6 +4399,25 @@ const App = () => {
                   <option value="male">ذكور فقط</option>
                   <option value="female">إناث فقط</option>
                 </select>
+              </div>
+              <div style={{ background: '#eef5f1', borderRadius: '8px', padding: '10px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!birthForm.registerLambs} onChange={e => setBirthForm(p => ({ ...p, registerLambs: e.target.checked }))} />
+                  🐑 تسجيل كل مولود كحيوان مستقل (للترقيم والأضحية)
+                </label>
+                {birthForm.registerLambs && Array.from({ length: Math.min(parseInt(birthForm.count, 10) || 0, 10) }, (_, i) => {
+                  const l = (birthForm.lambs || [])[i] || {};
+                  return (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
+                      <b style={{ fontSize: '12px' }}>#{i + 1}</b>
+                      <select value={l.gender || (birthForm.gender === 'male' ? 'male' : 'female')} onChange={e => updateLamb(i, { gender: e.target.value })} style={{ padding: '7px', border: '1px solid #ddd', borderRadius: '6px' }}>
+                        <option value="female">أنثى</option>
+                        <option value="male">ذكر</option>
+                      </select>
+                      <input type="number" min="1" placeholder="رقم الوسم (اختياري)" value={l.tagNo || ''} onChange={e => updateLamb(i, { tagNo: e.target.value })} style={{ padding: '7px', border: '1px solid #ddd', borderRadius: '6px', width: '100%' }} />
+                    </div>
+                  );
+                })}
               </div>
               <div>
                 <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>📝 ملاحظات</label>
@@ -2813,7 +4482,7 @@ const App = () => {
                         {index + 1}
                       </div>
                       <div>
-                        <div style={{ fontWeight: 'bold', fontSize: '16px', color: '#3D2817' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '16px', color: '#14352c' }}>
                           رقم {animal.number}
                           {index === 0 && <span style={{ marginRight: '6px', background: '#c0392b', color: 'white', fontSize: '11px', padding: '2px 7px', borderRadius: '4px' }}>🏆 الأفضل</span>}
                           {index === 1 && <span style={{ marginRight: '6px', background: '#e67e22', color: 'white', fontSize: '11px', padding: '2px 7px', borderRadius: '4px' }}>🥈 ثاني</span>}
@@ -2968,7 +4637,7 @@ const App = () => {
           <div style={{ background: 'white', borderRadius: '14px', maxWidth: '760px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
 
             {/* Header */}
-            <div style={{ background: 'linear-gradient(135deg, #6d4c41, #4e342e)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ background: 'linear-gradient(135deg, #3f7a6a, #4e342e)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '18px' }}>🐏 إدارة الفحول</h2>
                 <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>العزل للتسمين · العداد التنازلي · سجل الدورات · الملاحظات</p>
@@ -2992,7 +4661,7 @@ const App = () => {
                 { key: 'cycles', label: '🔄 سجل الدورات' },
                 { key: 'notes', label: '📋 الملاحظات' },
               ].map(tab => (
-                <button key={tab.key} onClick={() => setStudTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: studTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: studTab === tab.key ? '3px solid #6d4c41' : '3px solid transparent', cursor: 'pointer', fontWeight: studTab === tab.key ? 'bold' : 'normal', color: studTab === tab.key ? '#6d4c41' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
+                <button key={tab.key} onClick={() => setStudTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: studTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: studTab === tab.key ? '3px solid #3f7a6a' : '3px solid transparent', cursor: 'pointer', fontWeight: studTab === tab.key ? 'bold' : 'normal', color: studTab === tab.key ? '#3f7a6a' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
                   {tab.label}
                 </button>
               ))}
@@ -3035,7 +4704,7 @@ const App = () => {
                               style={{ background: isIsolated ? '#d5f5e3' : '#d6eaf8', border: `1px solid ${isIsolated ? '#27ae60' : '#2471a3'}`, color: isIsolated ? '#27ae60' : '#2471a3', borderRadius: '5px', padding: '5px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
                               {isIsolated ? '🔓 تحرير' : '🔒 عزل'}
                             </button>
-                            <button onClick={() => { setStudForm({ number: stud.number, animalType: stud.animalType, breed: stud.breed||'', isolationDays: stud.isolationDays, freeDays: stud.freeDays, status: stud.status, cycleStartDate: stud.cycleStartDate||'', vitamins: stud.vitamins||'', feedExtra: stud.feedExtra||'', notes: stud.notes||'' }); setEditStudId(stud.id); setShowAddStud(true); }} style={{ background: '#f0f9f6', border: '1px solid #6d4c41', color: '#6d4c41', borderRadius: '5px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { setStudForm({ number: stud.number, animalType: stud.animalType, breed: stud.breed||'', isolationDays: stud.isolationDays, freeDays: stud.freeDays, status: stud.status, cycleStartDate: stud.cycleStartDate||'', vitamins: stud.vitamins||'', feedExtra: stud.feedExtra||'', notes: stud.notes||'' }); setEditStudId(stud.id); setShowAddStud(true); }} style={{ background: '#f0f9f6', border: '1px solid #3f7a6a', color: '#3f7a6a', borderRadius: '5px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
                             <button onClick={() => { if (window.confirm('حذف هذا الفحل؟')) saveStuds(studs.filter(s => s.id !== stud.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '5px 8px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
                           </div>
                         </div>
@@ -3074,9 +4743,9 @@ const App = () => {
 
                         {/* آخر ملاحظة */}
                         {lastNote && (
-                          <div style={{ background: '#fdf8f5', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', border: '1px solid #e8d5b0' }}>
+                          <div style={{ background: '#fdf8f5', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', border: '1px solid #cfe2d8' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                              <span style={{ fontWeight: 'bold', color: '#6d4c41' }}>📋 آخر ملاحظة</span>
+                              <span style={{ fontWeight: 'bold', color: '#3f7a6a' }}>📋 آخر ملاحظة</span>
                               <span style={{ color: '#888' }}>{new Date(lastNote.date).toLocaleDateString('en-GB')}</span>
                             </div>
                             <div style={{ color: '#555' }}>{lastNote.observations}</div>
@@ -3101,8 +4770,8 @@ const App = () => {
 
                   {/* نموذج إضافة فحل */}
                   {showAddStud ? (
-                    <div style={{ background: '#fdf5ec', border: '2px solid #6d4c41', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
-                      <h4 style={{ color: '#6d4c41', margin: '0 0 12px' }}>{editStudId ? '✏️ تعديل فحل' : '➕ إضافة فحل'}</h4>
+                    <div style={{ background: '#fdf5ec', border: '2px solid #3f7a6a', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
+                      <h4 style={{ color: '#3f7a6a', margin: '0 0 12px' }}>{editStudId ? '✏️ تعديل فحل' : '➕ إضافة فحل'}</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>رقم الفحل *</label><input value={studForm.number} onChange={e => setStudForm(p => ({ ...p, number: e.target.value }))} placeholder="مثال: 1234" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع الحيوان</label>
@@ -3128,12 +4797,12 @@ const App = () => {
                         <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🌾 العلف الإضافي</label><input value={studForm.feedExtra} onChange={e => setStudForm(p => ({ ...p, feedExtra: e.target.value }))} placeholder="مثال: شعير مضاعف، نخالة، تمر" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
-                        <button onClick={handleSaveStud} style={{ background: '#6d4c41', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={handleSaveStud} style={{ background: '#3f7a6a', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
                         <button onClick={() => { setShowAddStud(false); setEditStudId(null); setStudForm({ number: '', animalType: 'sheep', breed: '', isolationDays: 14, freeDays: 7, status: 'free', cycleStartDate: '', vitamins: '', feedExtra: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
-                    <button onClick={() => setShowAddStud(true)} style={{ width: '100%', padding: '11px', background: '#6d4c41', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة فحل</button>
+                    <button onClick={() => setShowAddStud(true)} style={{ width: '100%', padding: '11px', background: '#3f7a6a', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة فحل</button>
                   )}
 
                   {/* نصائح الفيتامينات */}
@@ -3153,7 +4822,7 @@ const App = () => {
                   {showAddStudNote && studNoteId && (
                     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddStudNote(false)}>
                       <div style={{ background: 'white', borderRadius: '12px', maxWidth: '480px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ background: 'linear-gradient(135deg, #6d4c41, #4e342e)', padding: '14px 18px', color: 'white' }}>
+                        <div style={{ background: 'linear-gradient(135deg, #3f7a6a, #4e342e)', padding: '14px 18px', color: 'white' }}>
                           <h3 style={{ margin: 0, fontSize: '15px' }}>📝 ملاحظة — فحل {studs.find(s => s.id === studNoteId)?.number}</h3>
                         </div>
                         <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '11px' }}>
@@ -3181,7 +4850,7 @@ const App = () => {
                           <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🌾 العلف المعطى</label><input value={studNoteForm.feedGiven} onChange={e => setStudNoteForm(p => ({ ...p, feedGiven: e.target.value }))} placeholder="مثال: 1 كجم شعير + تمر" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                           <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 الملاحظات والمرئيات *</label><textarea value={studNoteForm.observations} onChange={e => setStudNoteForm(p => ({ ...p, observations: e.target.value }))} placeholder="اكتب ملاحظاتك... مثلاً: الفحل أظهر هيجاناً واضحاً، تحسّن وزنه، لاحظت نشاطاً مضاعفاً..." rows={3} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }} /></div>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                            <button onClick={handleSaveStudNote} style={{ background: '#6d4c41', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                            <button onClick={handleSaveStudNote} style={{ background: '#3f7a6a', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
                             <button onClick={() => setShowAddStudNote(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                           </div>
                         </div>
@@ -3199,7 +4868,7 @@ const App = () => {
                     if (cycles.length === 0) return null;
                     return (
                       <div key={stud.id} style={{ marginBottom: '15px' }}>
-                        <div style={{ fontWeight: 'bold', color: '#6d4c41', fontSize: '13px', marginBottom: '8px' }}>
+                        <div style={{ fontWeight: 'bold', color: '#3f7a6a', fontSize: '13px', marginBottom: '8px' }}>
                           🐏 رقم {stud.number} — {studTypeLabel(stud.animalType)} · {cycles.length} دورة مكتملة
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
@@ -3228,7 +4897,7 @@ const App = () => {
                     if (notes.length === 0) return null;
                     return (
                       <div key={stud.id} style={{ marginBottom: '15px' }}>
-                        <div style={{ fontWeight: 'bold', color: '#6d4c41', fontSize: '13px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 'bold', color: '#3f7a6a', fontSize: '13px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span>🐏 رقم {stud.number} — {studTypeLabel(stud.animalType)}</span>
                           <button onClick={() => { setStudNoteId(stud.id); setShowAddStudNote(true); }} style={{ background: '#fdebd0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '5px', padding: '3px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>📝 إضافة</button>
                         </div>
@@ -3263,7 +4932,7 @@ const App = () => {
             </div>
 
             <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
-              <button onClick={() => setShowStudSystem(false)} style={{ width: '100%', background: '#6d4c41', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+              <button onClick={() => setShowStudSystem(false)} style={{ width: '100%', background: '#3f7a6a', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
@@ -3476,7 +5145,7 @@ const App = () => {
           <div style={{ background: 'white', borderRadius: '14px', maxWidth: '780px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
 
             {/* Header */}
-            <div style={{ background: 'linear-gradient(135deg, #784212, #5d3310)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ background: 'linear-gradient(135deg, #35705f, #5d3310)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '18px' }}>👷 إدارة العمال والرواتب</h2>
                 <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>الرواتب · التكاليف الإضافية · ملخص المصروفات</p>
@@ -3495,7 +5164,7 @@ const App = () => {
                 { key: 'food', label: '🍽️ الزاد' },
                 { key: 'summary', label: '📊 ملخص المصروفات' },
               ].map(tab => (
-                <button key={tab.key} onClick={() => setWorkersTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: workersTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: workersTab === tab.key ? '3px solid #784212' : '3px solid transparent', cursor: 'pointer', fontWeight: workersTab === tab.key ? 'bold' : 'normal', color: workersTab === tab.key ? '#784212' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
+                <button key={tab.key} onClick={() => setWorkersTab(tab.key)} style={{ flex: 1, padding: '11px 8px', background: workersTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: workersTab === tab.key ? '3px solid #35705f' : '3px solid transparent', cursor: 'pointer', fontWeight: workersTab === tab.key ? 'bold' : 'normal', color: workersTab === tab.key ? '#35705f' : '#888', fontSize: isMobile ? '11px' : '13px' }}>
                   {tab.label}
                 </button>
               ))}
@@ -3553,7 +5222,7 @@ const App = () => {
                           </div>
                           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
                             <button onClick={() => { setWorkerCostWorkerId(worker.id); setShowAddWorkerCost(true); }} style={{ background: '#fdebd0', border: '1px solid #e67e22', color: '#e67e22', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>💸 تكلفة</button>
-                            <button onClick={() => { setWorkerForm({ name: worker.name, description: worker.description||'', nationality: worker.nationality||'', salary: worker.salary, startDate: worker.startDate||'', status: worker.status, statusDate: worker.statusDate||'', notes: worker.notes||'' }); setEditWorkerId(worker.id); setShowAddWorker(true); }} style={{ background: '#f0f9f6', border: '1px solid #784212', color: '#784212', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                            <button onClick={() => { setWorkerForm({ name: worker.name, description: worker.description||'', nationality: worker.nationality||'', salary: worker.salary, startDate: worker.startDate||'', status: worker.status, statusDate: worker.statusDate||'', notes: worker.notes||'' }); setEditWorkerId(worker.id); setShowAddWorker(true); }} style={{ background: '#f0f9f6', border: '1px solid #35705f', color: '#35705f', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
                             <button onClick={() => { if (window.confirm(`حذف "${worker.name}"؟`)) saveWorkers(workers.filter(w => w.id !== worker.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '4px 7px', cursor: 'pointer', fontSize: '13px' }}>🗑️</button>
                           </div>
                         </div>
@@ -3593,8 +5262,8 @@ const App = () => {
 
                   {/* نموذج إضافة/تعديل عامل */}
                   {showAddWorker ? (
-                    <div style={{ background: '#fdf5ec', border: '2px solid #784212', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
-                      <h4 style={{ color: '#784212', margin: '0 0 12px' }}>{editWorkerId ? '✏️ تعديل عامل' : '➕ إضافة عامل'}</h4>
+                    <div style={{ background: '#fdf5ec', border: '2px solid #35705f', borderRadius: '10px', padding: '15px', marginTop: '10px' }}>
+                      <h4 style={{ color: '#35705f', margin: '0 0 12px' }}>{editWorkerId ? '✏️ تعديل عامل' : '➕ إضافة عامل'}</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم العامل *</label><input value={workerForm.name} onChange={e => setWorkerForm(p => ({ ...p, name: e.target.value }))} placeholder="الاسم الكامل" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💼 وصف العمل</label><input value={workerForm.description} onChange={e => setWorkerForm(p => ({ ...p, description: e.target.value }))} placeholder="مثال: راعي الغنم، سائق، عامل نظافة" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
@@ -3616,12 +5285,12 @@ const App = () => {
                         <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={workerForm.notes} onChange={e => setWorkerForm(p => ({ ...p, notes: e.target.value }))} placeholder="أي معلومات إضافية" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
-                        <button onClick={handleSaveWorker} style={{ background: '#784212', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={handleSaveWorker} style={{ background: '#35705f', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
                         <button onClick={() => { setShowAddWorker(false); setEditWorkerId(null); setWorkerForm({ name: '', description: '', nationality: '', salary: '', startDate: '', status: 'active', statusDate: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
-                    <button onClick={() => setShowAddWorker(true)} style={{ width: '100%', padding: '11px', background: '#784212', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة عامل</button>
+                    <button onClick={() => setShowAddWorker(true)} style={{ width: '100%', padding: '11px', background: '#35705f', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginTop: '5px' }}>➕ إضافة عامل</button>
                   )}
                 </div>
               )}
@@ -3635,7 +5304,7 @@ const App = () => {
                     return (
                       <div key={worker.id} style={{ marginBottom: '16px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
-                          <div style={{ fontWeight: 'bold', color: '#784212', fontSize: '13px' }}>
+                          <div style={{ fontWeight: 'bold', color: '#35705f', fontSize: '13px' }}>
                             👷 {worker.name}
                             <span style={{ marginRight: '6px', fontSize: '11px', color: '#888', fontWeight: 'normal' }}>{worker.description}</span>
                           </div>
@@ -3674,7 +5343,7 @@ const App = () => {
                   {showAddWorkerCost && workerCostWorkerId && (
                     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px' }} onClick={() => setShowAddWorkerCost(false)}>
                       <div style={{ background: 'white', borderRadius: '12px', maxWidth: '420px', width: '100%', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ background: 'linear-gradient(135deg, #784212, #5d3310)', padding: '14px 18px', color: 'white' }}>
+                        <div style={{ background: 'linear-gradient(135deg, #35705f, #5d3310)', padding: '14px 18px', color: 'white' }}>
                           <h3 style={{ margin: 0, fontSize: '15px' }}>💸 إضافة تكلفة — {workers.find(w => w.id === workerCostWorkerId)?.name}</h3>
                         </div>
                         <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '11px' }}>
@@ -3690,7 +5359,7 @@ const App = () => {
                           <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 المبلغ (ريال) *</label><input type="number" min="0" value={workerCostForm.amount} onChange={e => setWorkerCostForm(p => ({ ...p, amount: e.target.value }))} placeholder="مثال: 500" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                           <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وصف التكلفة</label><input value={workerCostForm.description} onChange={e => setWorkerCostForm(p => ({ ...p, description: e.target.value }))} placeholder="مثال: تجديد إقامة سنوية، تذكرة إجازة" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '4px' }}>
-                            <button onClick={handleSaveWorkerCost} style={{ background: '#784212', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                            <button onClick={handleSaveWorkerCost} style={{ background: '#35705f', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
                             <button onClick={() => setShowAddWorkerCost(false)} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                           </div>
                         </div>
@@ -3714,23 +5383,23 @@ const App = () => {
                     }).reduce((s, r) => s + (r.total || 0), 0);
                     return (
                       <>
-                        <div style={{ background: '#fdf8f5', borderRadius: '10px', padding: '12px 15px', marginBottom: '14px', border: '1px solid #e8d5b0' }}>
-                          <div style={{ fontWeight: 'bold', color: '#784212', fontSize: '13px', marginBottom: '6px' }}>👷 العمال على رأس العمل الآن</div>
+                        <div style={{ background: '#fdf8f5', borderRadius: '10px', padding: '12px 15px', marginBottom: '14px', border: '1px solid #cfe2d8' }}>
+                          <div style={{ fontWeight: 'bold', color: '#35705f', fontSize: '13px', marginBottom: '6px' }}>👷 العمال على رأس العمل الآن</div>
                           {onSite.length === 0 ? <div style={{ color: '#bbb', fontSize: '12px' }}>لا يوجد عمال نشطون</div> : (
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                               {onSite.map(w => <span key={w.id} style={{ background: '#d5f5e3', color: '#27ae60', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>👷 {w.name}</span>)}
-                              <span style={{ background: '#784212', color: 'white', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>{onSite.length} شخص</span>
+                              <span style={{ background: '#35705f', color: 'white', fontSize: '12px', padding: '3px 10px', borderRadius: '8px', fontWeight: 'bold' }}>{onSite.length} شخص</span>
                             </div>
                           )}
                         </div>
                         {foodRecords.length > 0 && (
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginBottom: '14px' }}>
                             {[
-                              { label: 'إجمالي الزاد', val: totalFoodCost.toLocaleString() + ' ر', color: '#784212' },
+                              { label: 'إجمالي الزاد', val: totalFoodCost.toLocaleString() + ' ر', color: '#35705f' },
                               { label: 'هذا الشهر', val: monthlyFoodCost.toLocaleString() + ' ر', color: '#e67e22' },
                               { label: 'عدد البكجات', val: foodRecords.length, color: '#2471a3' },
                             ].map(s => (
-                              <div key={s.label} style={{ background: '#fdf8f5', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #e8d5b0' }}>
+                              <div key={s.label} style={{ background: '#fdf8f5', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #cfe2d8' }}>
                                 <div style={{ fontWeight: 'bold', color: s.color, fontSize: '15px' }}>{s.val}</div>
                                 <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>{s.label}</div>
                               </div>
@@ -3743,8 +5412,8 @@ const App = () => {
 
                   {/* نموذج إضافة/تعديل زاد */}
                   {showAddFood ? (
-                    <div style={{ background: '#fdf8f5', border: '2px solid #784212', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
-                      <h4 style={{ color: '#784212', margin: '0 0 10px' }}>{editFoodId ? '✏️ تعديل بكج الزاد' : '🛒 تسجيل بكج زاد جديد'}</h4>
+                    <div style={{ background: '#fdf8f5', border: '2px solid #35705f', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                      <h4 style={{ color: '#35705f', margin: '0 0 10px' }}>{editFoodId ? '✏️ تعديل بكج الزاد' : '🛒 تسجيل بكج زاد جديد'}</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📅 تاريخ الشراء</label><input type="date" value={foodForm.date} onChange={e => setFoodForm(p => ({ ...p, date: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>نوع الزاد</label>
@@ -3758,17 +5427,17 @@ const App = () => {
                         </div>
                         <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}>
                           <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>💰 تكلفة الزاد المشتراة (ريال) *</label>
-                          <input type="number" min="0" step="0.5" value={foodForm.totalCost} onChange={e => setFoodForm(p => ({ ...p, totalCost: e.target.value }))} placeholder="المبلغ الكلي للزاد المشترى" style={{ padding: '9px', border: '2px solid #784212', borderRadius: '6px', width: '100%', fontSize: '14px', fontWeight: 'bold' }} />
+                          <input type="number" min="0" step="0.5" value={foodForm.totalCost} onChange={e => setFoodForm(p => ({ ...p, totalCost: e.target.value }))} placeholder="المبلغ الكلي للزاد المشترى" style={{ padding: '9px', border: '2px solid #35705f', borderRadius: '6px', width: '100%', fontSize: '14px', fontWeight: 'bold' }} />
                         </div>
                         <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>📝 ملاحظات</label><input value={foodForm.notes} onChange={e => setFoodForm(p => ({ ...p, notes: e.target.value }))} placeholder="مثال: دجاج + أرز + خضار، شيّة خاصة..." style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
-                        <button onClick={handleSaveFood} style={{ background: '#784212', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={handleSaveFood} style={{ background: '#35705f', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
                         <button onClick={() => { setShowAddFood(false); setEditFoodId(null); setFoodForm({ date: new Date().toISOString().split('T')[0], type: 'weekly', totalCost: '', notes: '' }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
-                    <button onClick={() => setShowAddFood(true)} style={{ width: '100%', padding: '11px', background: '#784212', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>🛒 تسجيل بكج زاد جديد</button>
+                    <button onClick={() => setShowAddFood(true)} style={{ width: '100%', padding: '11px', background: '#35705f', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', marginBottom: '14px' }}>🛒 تسجيل بكج زاد جديد</button>
                   )}
 
                   {/* سجل الزاد */}
@@ -3794,30 +5463,30 @@ const App = () => {
                           return (
                             <div key={monthKey} style={{ marginBottom: '14px' }}>
                               {/* رأس الشهر */}
-                              <div style={{ background: '#784212', color: 'white', borderRadius: '8px 8px 0 0', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ background: '#35705f', color: 'white', borderRadius: '8px 8px 0 0', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontWeight: 'bold', fontSize: '13px' }}>📅 {monthName}</span>
                                 <span style={{ fontSize: '12px', opacity: 0.9 }}>{recs.length} بكج</span>
                               </div>
                               {/* بنود الشهر */}
-                              <div style={{ border: '1px solid #e8d5b0', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
+                              <div style={{ border: '1px solid #cfe2d8', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
                                 {recs.map((rec, idx) => (
                                   <div key={rec.id} style={{ background: idx % 2 === 0 ? 'white' : '#fdf8f5', padding: '9px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', borderTop: idx > 0 ? '1px solid #f0e8dc' : 'none' }}>
                                     <div style={{ fontSize: '13px' }}>
-                                      <span style={{ fontWeight: 'bold', color: '#784212' }}>{typeLabels[rec.type] || typeLabels[rec.mealType] || '🛒 زاد'}</span>
+                                      <span style={{ fontWeight: 'bold', color: '#35705f' }}>{typeLabels[rec.type] || typeLabels[rec.mealType] || '🛒 زاد'}</span>
                                       <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>📅 {new Date(rec.date).toLocaleDateString('en-GB')}</span>
                                       {rec.notes && <span style={{ color: '#aaa', fontSize: '11px', marginRight: '6px' }}>— {rec.notes}</span>}
                                     </div>
                                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                                       <span style={{ fontWeight: 'bold', color: '#27ae60', fontSize: '13px' }}>{rec.total.toLocaleString()} ر</span>
-                                      <button onClick={() => { setFoodForm({ date: rec.date, type: rec.type || rec.mealType || 'weekly', totalCost: String(rec.total), notes: rec.notes || '' }); setEditFoodId(rec.id); setShowAddFood(true); }} style={{ background: '#f0f9f6', border: '1px solid #784212', color: '#784212', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                                      <button onClick={() => { setFoodForm({ date: rec.date, type: rec.type || rec.mealType || 'weekly', totalCost: String(rec.total), notes: rec.notes || '' }); setEditFoodId(rec.id); setShowAddFood(true); }} style={{ background: '#f0f9f6', border: '1px solid #35705f', color: '#35705f', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
                                       <button onClick={() => { if (window.confirm('حذف؟')) saveFoodRecords(foodRecords.filter(f => f.id !== rec.id)); }} style={{ background: '#fff0f0', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' }}>🗑️</button>
                                     </div>
                                   </div>
                                 ))}
                                 {/* مجموع الشهر */}
-                                <div style={{ background: '#fdf0e0', padding: '9px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e8d5b0' }}>
-                                  <span style={{ fontSize: '12px', color: '#784212', fontWeight: 'bold' }}>🗓️ مجموع {monthName}</span>
-                                  <span style={{ fontWeight: 'bold', color: '#784212', fontSize: '15px' }}>{monthTotal.toLocaleString()} ريال</span>
+                                <div style={{ background: '#fdf0e0', padding: '9px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #cfe2d8' }}>
+                                  <span style={{ fontSize: '12px', color: '#35705f', fontWeight: 'bold' }}>🗓️ مجموع {monthName}</span>
+                                  <span style={{ fontWeight: 'bold', color: '#35705f', fontSize: '15px' }}>{monthTotal.toLocaleString()} ريال</span>
                                 </div>
                               </div>
                             </div>
@@ -3832,7 +5501,7 @@ const App = () => {
               {workersTab === 'summary' && (
                 <div>
                   {/* البطاقة الرئيسية */}
-                  <div style={{ background: 'linear-gradient(135deg, #784212, #5d3310)', borderRadius: '12px', padding: '18px', marginBottom: '15px', color: 'white' }}>
+                  <div style={{ background: 'linear-gradient(135deg, #35705f, #5d3310)', borderRadius: '12px', padding: '18px', marginBottom: '15px', color: 'white' }}>
                     <div style={{ fontSize: '13px', opacity: 0.85, marginBottom: '10px' }}>💰 إجمالي تكاليف العمالة</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '10px' }}>
                       {[
@@ -3860,17 +5529,17 @@ const App = () => {
                     const costsByType = {};
                     (worker.costs || []).forEach(c => { costsByType[c.type] = (costsByType[c.type] || 0) + parseFloat(c.amount || 0); });
                     return (
-                      <div key={worker.id} style={{ background: 'white', border: '1px solid #e8d5b0', borderRadius: '10px', padding: '14px', marginBottom: '10px' }}>
+                      <div key={worker.id} style={{ background: 'white', border: '1px solid #cfe2d8', borderRadius: '10px', padding: '14px', marginBottom: '10px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
                           <div>
-                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#784212' }}>👷 {worker.name}</div>
+                            <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#35705f' }}>👷 {worker.name}</div>
                             <div style={{ fontSize: '12px', color: '#888', marginTop: '2px', display: 'flex', gap: '10px' }}>
                               {worker.description && <span>{worker.description}</span>}
                               <span style={{ background: st.bg, color: st.color, padding: '1px 6px', borderRadius: '5px', fontSize: '11px' }}>{st.text}</span>
                             </div>
                           </div>
-                          <div style={{ textAlign: 'center', background: '#fdf5ec', borderRadius: '8px', padding: '6px 12px', border: '1px solid #e8d5b0' }}>
-                            <div style={{ fontWeight: 'bold', color: '#784212', fontSize: '15px' }}>{total.toLocaleString()} ر</div>
+                          <div style={{ textAlign: 'center', background: '#fdf5ec', borderRadius: '8px', padding: '6px 12px', border: '1px solid #cfe2d8' }}>
+                            <div style={{ fontWeight: 'bold', color: '#35705f', fontSize: '15px' }}>{total.toLocaleString()} ر</div>
                             <div style={{ fontSize: '10px', color: '#888' }}>إجمالي سنوي</div>
                           </div>
                         </div>
@@ -3910,7 +5579,7 @@ const App = () => {
             </div>
 
             <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
-              <button onClick={() => setShowWorkersSystem(false)} style={{ width: '100%', background: '#784212', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+              <button onClick={() => setShowWorkersSystem(false)} style={{ width: '100%', background: '#35705f', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
@@ -4919,7 +6588,7 @@ const App = () => {
           <div style={{ background: 'white', borderRadius: '14px', maxWidth: '780px', width: '100%', marginTop: '15px', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
 
             {/* Header */}
-            <div style={{ background: 'linear-gradient(135deg, #6e4b1f, #4a3010)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ background: 'linear-gradient(135deg, #2a6b58, #14352c)', padding: '18px 22px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '18px' }}>🌾 إدارة الأعلاف</h2>
                 <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.85 }}>المخزون · المشتريات · الاستهلاك · التوقعات والتنبيهات</p>
@@ -4941,7 +6610,7 @@ const App = () => {
                 { key: 'smart', label: '🧠 الاستهلاك الذكي' },
                 { key: 'stockupdate', label: '📋 تحديث المخزون' },
               ].map(tab => (
-                <button key={tab.key} onClick={() => setFeedTab(tab.key)} style={{ flex: '0 0 auto', padding: '11px 14px', background: feedTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: feedTab === tab.key ? '3px solid #6e4b1f' : '3px solid transparent', cursor: 'pointer', fontWeight: feedTab === tab.key ? 'bold' : 'normal', color: feedTab === tab.key ? '#6e4b1f' : '#888', fontSize: isMobile ? '11px' : '12px', whiteSpace: 'nowrap' }}>
+                <button key={tab.key} onClick={() => setFeedTab(tab.key)} style={{ flex: '0 0 auto', padding: '11px 14px', background: feedTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: feedTab === tab.key ? '3px solid #2a6b58' : '3px solid transparent', cursor: 'pointer', fontWeight: feedTab === tab.key ? 'bold' : 'normal', color: feedTab === tab.key ? '#2a6b58' : '#888', fontSize: isMobile ? '11px' : '12px', whiteSpace: 'nowrap' }}>
                   {tab.label}
                 </button>
               ))}
@@ -4954,8 +6623,8 @@ const App = () => {
                 <div>
                   {/* ملخص سريع */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '8px', marginBottom: '15px' }}>
-                    <div style={{ background: '#faf3e8', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #e8d5b0' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#6e4b1f' }}>{feeds.length}</div>
+                    <div style={{ background: '#eef5f1', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #cfe2d8' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#2a6b58' }}>{feeds.length}</div>
                       <div style={{ fontSize: '11px', color: '#888' }}>🌾 أنواع الأعلاف</div>
                     </div>
                     <div style={{ background: '#fef9e7', borderRadius: '8px', padding: '10px', textAlign: 'center', border: '1px solid #f0e68c' }}>
@@ -4978,7 +6647,7 @@ const App = () => {
                         <div key={feed.id} style={{ background: isAlert ? '#fff8f0' : 'white', border: `1.5px solid ${isAlert ? '#e67e22' : '#eee'}`, borderRadius: '10px', padding: '12px 15px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
                             <div style={{ flex: 1 }}>
-                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a3010', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#14352c', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 🌾 {feed.name}
                                 {isAlert && <span style={{ background: '#e67e22', color: 'white', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>⚠️ ينفد قريباً</span>}
                               </div>
@@ -5002,8 +6671,8 @@ const App = () => {
 
                   {/* نموذج إضافة/تعديل علف */}
                   {showAddFeed ? (
-                    <div style={{ background: '#faf3e8', border: '2px solid #6e4b1f', borderRadius: '10px', padding: '15px' }}>
-                      <h4 style={{ color: '#6e4b1f', margin: '0 0 12px' }}>{editFeedId ? '✏️ تعديل علف' : '➕ إضافة علف جديد'}</h4>
+                    <div style={{ background: '#eef5f1', border: '2px solid #2a6b58', borderRadius: '10px', padding: '15px' }}>
+                      <h4 style={{ color: '#2a6b58', margin: '0 0 12px' }}>{editFeedId ? '✏️ تعديل علف' : '➕ إضافة علف جديد'}</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>اسم العلف *</label><input value={feedForm.name} onChange={e => setFeedForm(p => ({ ...p, name: e.target.value }))} placeholder="مثال: ذرة صفراء" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>وحدة القياس</label>
@@ -5016,12 +6685,12 @@ const App = () => {
                         <div><label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>حد التنبيه المبكر ({feedForm.unit})</label><input type="number" min="1" value={feedForm.minAlert} onChange={e => setFeedForm(p => ({ ...p, minAlert: e.target.value }))} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100%', fontSize: '13px' }} /></div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
-                        <button onClick={handleSaveFeed} style={{ background: '#6e4b1f', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
+                        <button onClick={handleSaveFeed} style={{ background: '#2a6b58', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✓ حفظ</button>
                         <button onClick={() => { setShowAddFeed(false); setEditFeedId(null); setFeedForm({ name: '', unit: 'كيس', unitWeight: 50, stock: 0, minAlert: 3 }); }} style={{ background: '#ddd', border: 'none', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>إلغاء</button>
                       </div>
                     </div>
                   ) : (
-                    <button onClick={() => setShowAddFeed(true)} style={{ width: '100%', padding: '11px', background: '#6e4b1f', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>➕ إضافة علف جديد</button>
+                    <button onClick={() => setShowAddFeed(true)} style={{ width: '100%', padding: '11px', background: '#2a6b58', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>➕ إضافة علف جديد</button>
                   )}
                 </div>
               )}
@@ -5069,8 +6738,8 @@ const App = () => {
                   ) : (
                     <>
                       {/* ملخص حسب كل علف */}
-                      <div style={{ background: '#faf3e8', borderRadius: '10px', padding: '12px', marginBottom: '15px', border: '1px solid #e8d5b0' }}>
-                        <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#6e4b1f', marginBottom: '8px' }}>📊 إجمالي المشتريات حسب النوع</div>
+                      <div style={{ background: '#eef5f1', borderRadius: '10px', padding: '12px', marginBottom: '15px', border: '1px solid #cfe2d8' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#2a6b58', marginBottom: '8px' }}>📊 إجمالي المشتريات حسب النوع</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                           {feeds.map(feed => {
                             const feedBuys = feedPurchases.filter(p => p.feedId === feed.id);
@@ -5079,13 +6748,13 @@ const App = () => {
                             if (feedBuys.length === 0) return null;
                             return (
                               <div key={feed.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 8px', background: 'white', borderRadius: '6px' }}>
-                                <span style={{ fontWeight: 'bold', color: '#4a3010' }}>🌾 {feed.name}</span>
+                                <span style={{ fontWeight: 'bold', color: '#14352c' }}>🌾 {feed.name}</span>
                                 <span style={{ color: '#666' }}>{totalQty} {feed.unit} ({feedBuys.length} مرة)</span>
                                 <span style={{ fontWeight: 'bold', color: '#27ae60' }}>{totalCost.toLocaleString()} ريال</span>
                               </div>
                             );
                           })}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '6px 8px', background: '#6e4b1f', borderRadius: '6px', color: 'white', fontWeight: 'bold', marginTop: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '6px 8px', background: '#2a6b58', borderRadius: '6px', color: 'white', fontWeight: 'bold', marginTop: '4px' }}>
                             <span>الإجمالي الكلي</span>
                             <span>{feedPurchases.reduce((s, p) => s + p.totalCost, 0).toLocaleString()} ريال</span>
                           </div>
@@ -5102,16 +6771,16 @@ const App = () => {
                           return (
                             <div key={date} style={{ marginBottom: '12px' }}>
                               {/* رأس اليوم */}
-                              <div style={{ background: '#6e4b1f', color: 'white', borderRadius: '8px 8px 0 0', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ background: '#2a6b58', color: 'white', borderRadius: '8px 8px 0 0', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontWeight: 'bold', fontSize: '13px' }}>📅 {new Date(date).toLocaleDateString('en-GB')}</span>
                                 <span style={{ fontSize: '12px', opacity: 0.9 }}>{items.length} صنف</span>
                               </div>
                               {/* بنود اليوم */}
-                              <div style={{ border: '1px solid #e8d5b0', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
+                              <div style={{ border: '1px solid #cfe2d8', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
                                 {items.map((p, idx) => (
                                   <div key={p.id} style={{ background: idx % 2 === 0 ? 'white' : '#fdf8f5', padding: '9px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', borderTop: idx > 0 ? '1px solid #f0e8dc' : 'none' }}>
                                     <div style={{ flex: 1 }}>
-                                      <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010' }}>🌾 {p.feedName}</span>
+                                      <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#14352c' }}>🌾 {p.feedName}</span>
                                       <div style={{ fontSize: '11px', color: '#888', marginTop: '2px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                                         <span>📦 {p.qty} {feeds.find(f => f.id === p.feedId)?.unit || ''}</span>
                                         <span>💰 {p.pricePerUnit} ر/وحدة</span>
@@ -5127,9 +6796,9 @@ const App = () => {
                                   </div>
                                 ))}
                                 {/* مجموع اليوم */}
-                                <div style={{ background: '#faf3e8', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e8d5b0' }}>
-                                  <span style={{ fontSize: '12px', color: '#6e4b1f', fontWeight: 'bold' }}>مجموع يوم {new Date(date).toLocaleDateString('en-GB')}</span>
-                                  <span style={{ fontWeight: 'bold', color: '#6e4b1f', fontSize: '14px' }}>{dayTotal.toLocaleString()} ريال</span>
+                                <div style={{ background: '#eef5f1', padding: '8px 13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #cfe2d8' }}>
+                                  <span style={{ fontSize: '12px', color: '#2a6b58', fontWeight: 'bold' }}>مجموع يوم {new Date(date).toLocaleDateString('en-GB')}</span>
+                                  <span style={{ fontWeight: 'bold', color: '#2a6b58', fontSize: '14px' }}>{dayTotal.toLocaleString()} ريال</span>
                                 </div>
                               </div>
                             </div>
@@ -5161,7 +6830,7 @@ const App = () => {
                     const typeConsumption = feedConsumption[type] || {};
                     return (
                       <div key={type} style={{ background: 'white', border: '1px solid #eee', borderRadius: '10px', padding: '14px', marginBottom: '12px' }}>
-                        <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a3010', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#14352c', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           {typeName}
                           <span style={{ fontSize: '12px', color: '#888', fontWeight: 'normal' }}>الحيوانات النشطة: {activeCountByType[type] || 0}</span>
                         </div>
@@ -5170,8 +6839,8 @@ const App = () => {
                             const val = typeConsumption[feed.name] !== undefined ? typeConsumption[feed.name] : 0;
                             const dailyTotal = val * (activeCountByType[type] || 0);
                             return (
-                              <div key={feed.id} style={{ background: '#faf3e8', borderRadius: '8px', padding: '8px' }}>
-                                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#6e4b1f', marginBottom: '5px' }}>🌾 {feed.name}</div>
+                              <div key={feed.id} style={{ background: '#eef5f1', borderRadius: '8px', padding: '8px' }}>
+                                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#2a6b58', marginBottom: '5px' }}>🌾 {feed.name}</div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '4px' }}>
                                   <input type="number" min="0" step="0.1" value={val} onChange={e => {
                                     const newVal = parseFloat(e.target.value) || 0;
@@ -5195,7 +6864,7 @@ const App = () => {
               {feedTab === 'forecast' && (
                 <div>
                   {/* الاستهلاك الكلي اليومي */}
-                  <div style={{ background: 'linear-gradient(135deg, #6e4b1f, #4a3010)', borderRadius: '10px', padding: '14px', marginBottom: '15px', color: 'white' }}>
+                  <div style={{ background: 'linear-gradient(135deg, #2a6b58, #14352c)', borderRadius: '10px', padding: '14px', marginBottom: '15px', color: 'white' }}>
                     <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '10px', opacity: 0.9 }}>📊 الاستهلاك اليومي الكلي للمشروع</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '8px' }}>
                       {feedForecast.filter(f => f.dailyKg > 0).map(f => (
@@ -5213,7 +6882,7 @@ const App = () => {
                       <div style={{ fontWeight: 'bold', color: '#e74c3c', marginBottom: '8px', fontSize: '13px' }}>⚠️ تنبيه — أعلاف ستنفد قريباً</div>
                       {feedForecast.filter(f => f.alert).map(f => (
                         <div key={f.id} style={{ background: 'white', borderRadius: '6px', padding: '7px 10px', marginBottom: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                          <span style={{ fontWeight: 'bold', color: '#4a3010' }}>🌾 {f.name}</span>
+                          <span style={{ fontWeight: 'bold', color: '#14352c' }}>🌾 {f.name}</span>
                           <span style={{ color: f.daysLeft <= 7 ? '#e74c3c' : '#e67e22', fontWeight: 'bold' }}>
                             {f.daysLeft !== null ? `باقي ${f.daysLeft} يوم` : 'لا يوجد مخزون'}
                           </span>
@@ -5224,19 +6893,19 @@ const App = () => {
                   )}
 
                   {/* تكاليف كل علف */}
-                  <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010', marginBottom: '10px' }}>💰 تحليل تكاليف الأعلاف</div>
+                  <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#14352c', marginBottom: '10px' }}>💰 تحليل تكاليف الأعلاف</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
                     {feedForecast.map(f => {
                       if (!f.dailyCost && !f.lastPrice) return null;
                       return (
                         <div key={f.id} style={{ background: 'white', border: '1px solid #eee', borderRadius: '10px', padding: '12px 15px' }}>
-                          <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#4a3010', marginBottom: '8px' }}>🌾 {f.name}</div>
+                          <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#14352c', marginBottom: '8px' }}>🌾 {f.name}</div>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '6px', fontSize: '12px' }}>
                             {f.dailyCost > 0 && <>
-                              <div style={{ background: '#faf3e8', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#6e4b1f' }}>{f.dailyCost.toFixed(1)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>يومي</div></div>
-                              <div style={{ background: '#faf3e8', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e67e22' }}>{f.weeklyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>أسبوعي</div></div>
-                              <div style={{ background: '#faf3e8', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e74c3c' }}>{f.monthlyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>شهري</div></div>
-                              <div style={{ background: '#faf3e8', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#922b21' }}>{f.yearlyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>سنوي</div></div>
+                              <div style={{ background: '#eef5f1', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#2a6b58' }}>{f.dailyCost.toFixed(1)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>يومي</div></div>
+                              <div style={{ background: '#eef5f1', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e67e22' }}>{f.weeklyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>أسبوعي</div></div>
+                              <div style={{ background: '#eef5f1', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#e74c3c' }}>{f.monthlyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>شهري</div></div>
+                              <div style={{ background: '#eef5f1', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#922b21' }}>{f.yearlyCost.toFixed(0)} ر</div><div style={{ color: '#888', fontSize: '10px' }}>سنوي</div></div>
                             </>}
                             {f.daysLeft !== null && <div style={{ background: f.daysLeft <= 7 ? '#fadbd8' : f.daysLeft <= 21 ? '#fdebd0' : '#d5f5e3', borderRadius: '6px', padding: '7px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: f.daysLeft <= 7 ? '#e74c3c' : f.daysLeft <= 21 ? '#e67e22' : '#27ae60' }}>{f.daysLeft} يوم</div><div style={{ color: '#888', fontSize: '10px' }}>يكفي المخزون</div></div>}
                           </div>
@@ -5308,7 +6977,7 @@ const App = () => {
                         {/* رأس */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
                           <div>
-                            <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#4a3010', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#14352c', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                               🌾 {feed.name}
                               <span style={{ background: '#f5f5f5', color: confidenceColor, fontSize: '11px', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold', border: `1px solid ${confidenceColor}` }}>{confidenceLabel}</span>
                               {feed.needsAlert && <span style={{ background: '#e67e22', color: 'white', fontSize: '11px', padding: '2px 7px', borderRadius: '6px', fontWeight: 'bold' }}>⚠️ اشتري قريباً!</span>}
@@ -5318,8 +6987,8 @@ const App = () => {
                             </div>
                           </div>
                           {hasEnoughData && feed.avgDailyBags && (
-                            <div style={{ textAlign: 'center', background: '#faf3e8', borderRadius: '8px', padding: '6px 12px', border: '1px solid #e8d5b0' }}>
-                              <div style={{ fontWeight: 'bold', color: '#6e4b1f', fontSize: '16px' }}>{feed.avgDailyBags.toFixed(2)}</div>
+                            <div style={{ textAlign: 'center', background: '#eef5f1', borderRadius: '8px', padding: '6px 12px', border: '1px solid #cfe2d8' }}>
+                              <div style={{ fontWeight: 'bold', color: '#2a6b58', fontSize: '16px' }}>{feed.avgDailyBags.toFixed(2)}</div>
                               <div style={{ fontSize: '10px', color: '#888' }}>{feed.unit}/يوم</div>
                             </div>
                           )}
@@ -5366,11 +7035,11 @@ const App = () => {
 
                             {/* إحصائيات */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: '7px', marginBottom: '10px' }}>
-                              <div style={{ background: '#faf3e8', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
-                                <div style={{ fontWeight: 'bold', color: '#6e4b1f', fontSize: '14px' }}>{feed.avgDailyBags?.toFixed(2)}</div>
+                              <div style={{ background: '#eef5f1', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
+                                <div style={{ fontWeight: 'bold', color: '#2a6b58', fontSize: '14px' }}>{feed.avgDailyBags?.toFixed(2)}</div>
                                 <div style={{ fontSize: '10px', color: '#888' }}>{feed.unit}/يوم</div>
                               </div>
-                              <div style={{ background: '#faf3e8', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
+                              <div style={{ background: '#eef5f1', borderRadius: '7px', padding: '8px', textAlign: 'center' }}>
                                 <div style={{ fontWeight: 'bold', color: '#e67e22', fontSize: '14px' }}>{feed.avgDailyKg?.toFixed(2)}</div>
                                 <div style={{ fontSize: '10px', color: '#888' }}>كجم/يوم</div>
                               </div>
@@ -5380,9 +7049,9 @@ const App = () => {
                                   <div style={{ fontSize: '10px', color: '#888' }}>المتبقي</div>
                                 </div>
                               )}
-                              {feed.weeklyCost && <div style={{ background: '#faf3e8', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '14px' }}>{feed.weeklyCost.toFixed(0)} ر</div><div style={{ fontSize: '10px', color: '#888' }}>أسبوعي</div></div>}
-                              {feed.monthlyCost && <div style={{ background: '#faf3e8', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '14px' }}>{feed.monthlyCost.toFixed(0)} ر</div><div style={{ fontSize: '10px', color: '#888' }}>شهري</div></div>}
-                              {feed.yearlyCost && <div style={{ background: '#faf3e8', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '14px' }}>{feed.yearlyCost.toFixed(0)} ر</div><div style={{ fontSize: '10px', color: '#888' }}>سنوي</div></div>}
+                              {feed.weeklyCost && <div style={{ background: '#eef5f1', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '14px' }}>{feed.weeklyCost.toFixed(0)} ر</div><div style={{ fontSize: '10px', color: '#888' }}>أسبوعي</div></div>}
+                              {feed.monthlyCost && <div style={{ background: '#eef5f1', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '14px' }}>{feed.monthlyCost.toFixed(0)} ر</div><div style={{ fontSize: '10px', color: '#888' }}>شهري</div></div>}
+                              {feed.yearlyCost && <div style={{ background: '#eef5f1', borderRadius: '7px', padding: '8px', textAlign: 'center' }}><div style={{ fontWeight: 'bold', color: '#c0392b', fontSize: '14px' }}>{feed.yearlyCost.toFixed(0)} ر</div><div style={{ fontSize: '10px', color: '#888' }}>سنوي</div></div>}
                             </div>
 
                             {/* شريط المتبقي */}
@@ -5411,13 +7080,13 @@ const App = () => {
 
                             {/* جدول الفترات المحسوبة */}
                             <div style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid #eee' }}>
-                              <div style={{ background: '#f9f3e8', padding: '7px 12px', fontSize: '11px', fontWeight: 'bold', color: '#6e4b1f' }}>📋 تفاصيل الفترات المحسوبة</div>
+                              <div style={{ background: '#f9f3e8', padding: '7px 12px', fontSize: '11px', fontWeight: 'bold', color: '#2a6b58' }}>📋 تفاصيل الفترات المحسوبة</div>
                               {feed.intervals.map((iv, i) => (
                                 <div key={i} style={{ padding: '7px 12px', borderBottom: '1px solid #f5f5f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '4px', background: i % 2 === 0 ? 'white' : '#faf8f5', fontSize: '12px' }}>
                                   <span style={{ color: '#888' }}>{new Date(iv.from).toLocaleDateString('en-GB')} ← {new Date(iv.to).toLocaleDateString('en-GB')}</span>
                                   <div style={{ display: 'flex', gap: '12px' }}>
                                     <span>{iv.qty} {feed.unit} / {iv.days} يوم</span>
-                                    <span style={{ fontWeight: 'bold', color: '#6e4b1f' }}>{iv.dailyBags.toFixed(2)} {feed.unit}/يوم</span>
+                                    <span style={{ fontWeight: 'bold', color: '#2a6b58' }}>{iv.dailyBags.toFixed(2)} {feed.unit}/يوم</span>
                                   </div>
                                 </div>
                               ))}
@@ -5435,7 +7104,7 @@ const App = () => {
 
                   {/* ملخص تكاليف ذكي */}
                   {smartConsumption.some(f => f.monthlyCost) && (
-                    <div style={{ background: 'linear-gradient(135deg, #6e4b1f, #4a3010)', borderRadius: '10px', padding: '14px', color: 'white', marginTop: '5px' }}>
+                    <div style={{ background: 'linear-gradient(135deg, #2a6b58, #14352c)', borderRadius: '10px', padding: '14px', color: 'white', marginTop: '5px' }}>
                       <div style={{ fontSize: '13px', opacity: 0.9, marginBottom: '10px', fontWeight: 'bold' }}>💰 إجمالي تكاليف الأعلاف (حساب ذكي)</div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
                         {[
@@ -5545,7 +7214,7 @@ const App = () => {
                         <div key={feed.id} style={{ background: 'white', border: `1.5px solid ${hasRemaining ? '#27ae60' : '#f0e68c'}`, borderRadius: '8px', padding: '10px 12px', marginBottom: '8px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '5px', marginBottom: '7px' }}>
                             <div>
-                              <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#4a3010' }}>🌾 {feed.name}</span>
+                              <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#14352c' }}>🌾 {feed.name}</span>
                               <span style={{ fontSize: '11px', color: '#888', marginRight: '8px' }}>آخر شراء: {new Date(lastPurchase.date).toLocaleDateString('en-GB')} — {lastPurchase.qty} {feed.unit}</span>
                             </div>
                             {hasRemaining
@@ -5573,7 +7242,7 @@ const App = () => {
             </div>
 
             <div style={{ padding: '13px 20px', borderTop: '1px solid #eee' }}>
-              <button onClick={() => setShowFeedSystem(false)} style={{ width: '100%', background: '#6e4b1f', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
+              <button onClick={() => setShowFeedSystem(false)} style={{ width: '100%', background: '#2a6b58', color: 'white', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>إغلاق</button>
             </div>
           </div>
         </div>
@@ -6814,7 +8483,7 @@ const App = () => {
                             {/* رأس التجربة */}
                             <div style={{ background: '#fffbf0', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f0e68c' }}>
                               <div>
-                                <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3D2817' }}>🦠 {exp.disease}</div>
+                                <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#14352c' }}>🦠 {exp.disease}</div>
                                 {exp.medicine && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>💊 {exp.medicine}</div>}
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -6934,7 +8603,7 @@ const App = () => {
                   {salesReportData.list.map((animal, i) => (
                     <div key={`${animal.type}-${animal.id}`} style={{ background: 'white', border: '1px solid #f0e68c', borderRadius: '10px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                       <div>
-                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3D2817' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#14352c' }}>
                           #{animal.number}
                           <span style={{ marginRight: '8px', fontSize: '12px', color: '#888' }}>{animal.type === 'sheep' ? '🐑 ضان' : animal.type === 'goat' ? '🐐 ماعز' : `🐄 ${animal.type}`}</span>
                         </div>
@@ -6976,7 +8645,7 @@ const App = () => {
                           return (
                             <div key={`${animal.type}-${animal.id}`} style={{ background: isProfit ? '#f9fff9' : '#fff9f9', border: `1px solid ${isProfit ? '#a9dfbf' : '#f1948a'}`, borderRadius: '10px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                               <div>
-                                <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3D2817' }}>
+                                <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#14352c' }}>
                                   #{animal.number}
                                   <span style={{ marginRight: '8px', fontSize: '12px', color: '#888' }}>{animal.type === 'sheep' ? '🐑' : animal.type === 'goat' ? '🐐' : '🐄'}</span>
                                 </div>
@@ -7139,7 +8808,7 @@ const App = () => {
             </div>
 
             {/* التبويبات */}
-            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f9f7f4' }}>
+            <div style={{ display: 'flex', borderBottom: '2px solid #eee', background: '#f2f6f3' }}>
               {[{ key: 'list', label: '👴 قائمة العويد' }, { key: 'lastbirth', label: '🐣 آخر ولادة' }].map(tab => (
                 <button key={tab.key} onClick={() => setAgeReportTab(tab.key)} style={{ flex: 1, padding: '11px', background: ageReportTab === tab.key ? 'white' : 'transparent', border: 'none', borderBottom: ageReportTab === tab.key ? '3px solid #8e44ad' : '3px solid transparent', cursor: 'pointer', fontWeight: ageReportTab === tab.key ? 'bold' : 'normal', color: ageReportTab === tab.key ? '#8e44ad' : '#888', fontSize: isMobile ? '12px' : '13px' }}>
                   {tab.label}
@@ -7202,7 +8871,7 @@ const App = () => {
                           {index + 1}
                         </div>
                         <div>
-                          <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#3D2817' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#14352c' }}>
                             رقم {animal.number}
                             {index === 0 && <span style={{ marginRight: '6px', fontSize: '12px', background: '#8e44ad', color: 'white', padding: '2px 6px', borderRadius: '4px' }}>الأكبر</span>}
                           </div>
@@ -7224,7 +8893,7 @@ const App = () => {
                 </div>
               )}
             </div> : ageReportTab === 'lastbirth' ? <div style={{ padding: '15px 20px' }}>
-                  <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f9f7f4', borderRadius: '8px', padding: '8px 12px' }}>
+                  <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', background: '#f2f6f3', borderRadius: '8px', padding: '8px 12px' }}>
                     يعرض آخر تاريخ ولادة لكل أنثى مع عداد الوقت المنقضي منذها
                   </div>
                   {(() => {
@@ -7283,6 +8952,13 @@ const App = () => {
             </div>
           </div>
       )}
+
+      {/* ===== صفحات v2 ===== */}
+      {activePage === 'tags' && <TagRegistryPage animals={animals} settings={settings} saveSettings={saveFarmSettings} onSaveAnimal={(type, id, data) => saveAnimalToFirebase(user.id, type, id, data)} onClose={() => setActivePage('')} />}
+      {activePage === 'udhiyah' && <UdhiyahPage animals={animals} settings={settings} saveSettings={saveFarmSettings} onClose={() => setActivePage('')} />}
+      {activePage === 'reports' && <ReportsHub animals={animals} settings={settings} finance={{ feedPurchases, vetPurchases, foodRecords, workers }} onOpen={handleNav} onClose={() => setActivePage('')} />}
+      {activePage === 'tasks' && <TasksPage tasks={tasks} saveTasks={saveTasks} settings={settings} saveSettings={saveFarmSettings} animalTypes={animalTypes} onClose={() => setActivePage('')} />}
+      {activePage === 'feedcalc' && <FeedCalcPage userId={user.id} onClose={() => setActivePage('')} />}
     </div>
   );
 };
