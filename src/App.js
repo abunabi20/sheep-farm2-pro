@@ -207,7 +207,7 @@ const DEFAULT_SETTINGS = {
     { id: 'white', name: 'أبيض', hex: '#FFFFFF', species: 'goat', from: 1, to: 100 }
   ],
   barns: [],
-  udhiyahMonths: { sheep: 6, goat: 6, other: 12 },
+  udhiyahMonths: { sheep: 6, goat: 12, other: 12 },
   eidDate: ''
 };
 
@@ -973,7 +973,7 @@ const UdhiyahPage = ({ animals, settings, saveSettings, onClose }) => {
           ))}
         </div>
         <div style={{ fontSize: '11px', color: T.muted, marginTop: '8px', lineHeight: 1.7 }}>
-          الحد الأدنى للضان والماعز مضبوط على 6 أشهر حسب طلبك، ويمكنك تغيير الرقم لأي نوع من الخانات أعلاه.
+          الحد الأدنى للضان 6 أشهر وللماعز سنة كاملة (12 شهراً)، ويمكنك تغيير الرقم لأي نوع من الخانات أعلاه.
         </div>
       </div>
 
