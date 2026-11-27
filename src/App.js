@@ -207,7 +207,7 @@ const DEFAULT_SETTINGS = {
     { id: 'white', name: 'أبيض', hex: '#FFFFFF', species: 'goat', from: 1, to: 100 }
   ],
   barns: [],
-  udhiyahMonths: { sheep: 6, goat: 12, other: 12 },
+  udhiyahMonths: { sheep: 6, goat: 6, other: 12 },
   eidDate: ''
 };
 
@@ -371,6 +371,28 @@ const TagChip = ({ color, no, size }) => {
   );
 };
 
+// آخر تاريخ ميلاد يؤهل للأضحية يوم العيد، لكل نوع
+const CutoffList = ({ animals, settings, eid }) => {
+  const types = Object.keys(animals || {});
+  const all = flattenAnimals(animals).filter(isActiveAnimal);
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.7)', border: '1px dashed #e0c36a', borderRadius: '10px', padding: '10px 12px', marginTop: '10px' }}>
+      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#7a5a12', marginBottom: '6px' }}>📌 آخر تاريخ ميلاد يضحي يوم العيد</div>
+      {types.map(t => {
+        const m = udhiyahMonthsFor(settings, t);
+        const cutoff = addMonthsTo(eid, -m);
+        const after = all.filter(a => a.type === t && pd(a.birthDate) && pd(a.birthDate) > cutoff).length;
+        return (
+          <div key={t} style={{ fontSize: '12px', lineHeight: 1.9, color: '#444' }}>
+            {typeLabel(t)}: من وُلد في <b style={{ color: '#1e7a46' }}>{fmtDate(cutoff)}</b> أو قبله (عمر {m} أشهر فأكثر)
+            {after > 0 && <span style={{ color: '#b3382f' }}> · {after} رأس وُلد بعده</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // ============================================================
 // ===== لوحة القيادة الرئيسية =====
 // ============================================================
@@ -490,7 +512,10 @@ const HomeDashboard = ({ animals, settings, allAlerts, tasks, smartConsumption, 
         <div onClick={() => onNav('udhiyah')} style={{ ...cardStyle, padding: '18px', cursor: 'pointer', background: 'linear-gradient(135deg, #fff8e1, #fff)', borderColor: '#f1dc9a' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ fontWeight: 800, color: T.dark, fontSize: '15px' }}>🕌 عيد الأضحى</div>
-            <div style={{ fontSize: '12px', color: T.muted }}>{fmtDate(eid)}</div>
+            <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#7a5a12', textAlign: 'left' }}>
+              {eid.toLocaleDateString('ar-SA-u-ca-gregory-nu-latn', { weekday: 'long' })} {fmtDate(eid)}
+              {hijriText(eid) && <div style={{ fontSize: '11px', fontWeight: 'normal', color: T.muted }}>{hijriText(eid)}</div>}
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '10px 0' }}>
             <span style={{ fontSize: '42px', fontWeight: 800, color: '#b7791f', lineHeight: 1 }}>{eidDays > 0 ? eidDays : 0}</span>
@@ -506,6 +531,7 @@ const HomeDashboard = ({ animals, settings, allAlerts, tasks, smartConsumption, 
               <div style={{ fontSize: '11px', color: '#b3382f' }}>لا يضحي (صغير)</div>
             </div>
           </div>
+          <CutoffList animals={animals} settings={settings} eid={eid} />
         </div>
 
         {/* التنبيهات */}
@@ -920,7 +946,9 @@ const UdhiyahPage = ({ animals, settings, saveSettings, onClose }) => {
       <div style={{ ...cardStyle, padding: '18px', marginBottom: '14px', background: 'linear-gradient(135deg, #fff8e1, #ffffff)', borderColor: '#f1dc9a', textAlign: 'center' }}>
         <div style={{ fontSize: '13px', color: T.muted }}>المتبقي على العيد</div>
         <div style={{ fontSize: '46px', fontWeight: 800, color: '#b7791f', lineHeight: 1.1 }}>{daysLeft > 0 ? daysLeft : 0} <span style={{ fontSize: '16px' }}>يوم</span></div>
+        <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#7a5a12', marginTop: '6px' }}>{eid.toLocaleDateString('ar-SA-u-ca-gregory-nu-latn', { weekday: 'long' })} {fmtDate(eid)} {hijriText(eid) ? `· ${hijriText(eid)}` : ''}</div>
         <div style={{ fontSize: '12px', color: T.muted, marginTop: '4px' }}>الحساب يتم على عمر الحيوان يوم العيد وليس اليوم، حسب الحد الأدنى لكل نوع</div>
+        <div style={{ textAlign: 'right' }}><CutoffList animals={animals} settings={settings} eid={eid} /></div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(125px, 1fr))', gap: '10px', marginBottom: '14px' }}>
@@ -945,7 +973,7 @@ const UdhiyahPage = ({ animals, settings, saveSettings, onClose }) => {
           ))}
         </div>
         <div style={{ fontSize: '11px', color: T.muted, marginTop: '8px', lineHeight: 1.7 }}>
-          الضأن الجذع يكفي له 6 أشهر، أما الماعز فالمعتمد عند أهل العلم أن يتم سنة (12 شهراً)، لذلك ضبطتها 12 للماعز. إن أردت 6 للماعز غيّر الرقم أعلاه.
+          الحد الأدنى للضان والماعز مضبوط على 6 أشهر حسب طلبك، ويمكنك تغيير الرقم لأي نوع من الخانات أعلاه.
         </div>
       </div>
 
